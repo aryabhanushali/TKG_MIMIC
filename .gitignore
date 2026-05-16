@@ -1,0 +1,32 @@
+# MIMIC-IV data: cannot be redistributed (credentialed PhysioNet access)
+mimic_data/
+
+# Derived artifacts (large; reproduced by the pipeline)
+tkg_output/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+.env
+*.pem
+*.key
