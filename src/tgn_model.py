@@ -1,7 +1,6 @@
 """TGAT-style temporal attention model over patient pre-index event sequences."""
 import os
 import time
-import json
 import numpy as np
 import pandas as pd
 import torch
@@ -14,14 +13,14 @@ from sklearn.metrics import (
     roc_curve, f1_score, accuracy_score, log_loss,
 )
 
-from src.config import OUTPUT_DIR, FIGURES_DIR, SEED, PRE_INDEX_WINDOW_DAYS
+from src.config import OUTPUT_DIR, FIGURES_DIR, SEED
 
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
 MODEL_DIR = os.path.join(OUTPUT_DIR, "tgn")
 ENDPOINT_ORDER = ["MI", "Stroke", "HF", "AF", "PAD", "censored"]
 EP_TO_IDX = {ep: i for i, ep in enumerate(ENDPOINT_ORDER)}
 
-MAX_SEQ_LEN = 256        # cap events per patient (covers p99); subsample tail
+MAX_SEQ_LEN = 256
 D_MODEL = 128
 N_HEADS = 4
 N_LAYERS = 2
@@ -30,14 +29,11 @@ BATCH_SIZE = 128
 LR = 1e-3
 WEIGHT_DECAY = 1e-5
 EPOCHS = 30
-PATIENCE = 6             # early stopping patience on val macroF1
+PATIENCE = 6
 
 
-# --------------------------------------------------------------------------- #
-# Model                                                                       #
-# --------------------------------------------------------------------------- #
 class TimeEncoder(nn.Module):
-    """Bochner time encoding from TGAT (Xu et al. 2020)."""
+    """Bochner time encoding (Xu et al. 2020, TGAT)."""
     def __init__(self, dim: int):
         super().__init__()
         self.dim = dim
@@ -46,7 +42,6 @@ class TimeEncoder(nn.Module):
         self.phase = nn.Parameter(torch.zeros(dim))
 
     def forward(self, t: torch.Tensor) -> torch.Tensor:
-        # t: (B, L) float days. Output: (B, L, dim)
         out = t.unsqueeze(-1) * self.basis_freq.view(1, 1, -1) \
               + self.phase.view(1, 1, -1)
         return torch.cos(out)
@@ -61,7 +56,6 @@ class TKGTransformer(nn.Module):
         self.concept_emb = nn.Embedding(n_concepts, d_model)
         self.edge_emb = nn.Embedding(n_edge_types, d_model)
         self.time_enc = TimeEncoder(d_model)
-        # value branch: (value_norm, value_present) -> d_model
         self.value_proj = nn.Sequential(
             nn.Linear(2, d_model), nn.GELU(),
         )
@@ -92,7 +86,6 @@ class TKGTransformer(nn.Module):
 
     def forward(self, concept_idx, edge_type_idx, t, v_norm, v_present,
                 static, mask, return_attention: bool = False):
-        # mask: (B, L) bool — True for valid (non-pad)
         ce = self.concept_emb(concept_idx)
         ee = self.edge_emb(edge_type_idx)
         te = self.time_enc(t)
@@ -100,7 +93,6 @@ class TKGTransformer(nn.Module):
         x = self.input_proj(torch.cat([ce, ee, te, ve], dim=-1))
         x = self.input_norm(x)
 
-        # key_padding_mask: True for positions to IGNORE
         kpm = ~mask
         x = self.encoder(x, src_key_padding_mask=kpm)
 
@@ -114,14 +106,10 @@ class TKGTransformer(nn.Module):
         s = self.static_proj(static)
         out = self.head(torch.cat([pooled, s], dim=-1))
         if return_attention:
-            # attn_weights: (B, 1, L) -> (B, L)
             return out, attn_weights.squeeze(1)
         return out
 
 
-# --------------------------------------------------------------------------- #
-# Dataset                                                                     #
-# --------------------------------------------------------------------------- #
 class PatientEventsDataset(Dataset):
     def __init__(self, subject_ids, events_by_sid, static_arr_by_sid,
                  label_by_sid, max_len: int = MAX_SEQ_LEN):
@@ -136,11 +124,10 @@ class PatientEventsDataset(Dataset):
 
     def __getitem__(self, i: int):
         sid = self.sids[i]
-        ev = self.events[sid]   # (concept_idx, edge_idx, t, v_norm, v_present)
+        ev = self.events[sid]
         if len(ev) == 5:
             c, e, t, vn, vp = ev
         else:
-            # legacy 3-tuple: synthesize zero values
             c, e, t = ev
             vn = np.zeros_like(t, dtype=np.float32)
             vp = np.zeros_like(t, dtype=np.float32)
@@ -192,9 +179,6 @@ def collate(batch):
     }
 
 
-# --------------------------------------------------------------------------- #
-# Metrics + helpers                                                           #
-# --------------------------------------------------------------------------- #
 def _per_endpoint(y_idx: np.ndarray, proba: np.ndarray) -> pd.DataFrame:
     rows = []
     for ep, j in EP_TO_IDX.items():
@@ -221,9 +205,6 @@ def _overall(y_idx: np.ndarray, proba: np.ndarray) -> dict:
     }
 
 
-# --------------------------------------------------------------------------- #
-# Pipeline                                                                    #
-# --------------------------------------------------------------------------- #
 def _set_seed(seed: int = SEED) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -238,15 +219,14 @@ def _prepare_data():
     events = pd.read_csv(os.path.join(MODELING_DIR, "events.csv"))
     edge_types = pd.read_csv(os.path.join(MODELING_DIR, "edge_types.csv"))
 
-    # Train-observed concepts only (others -> UNK at idx 0); strict no-leak setup
+    # Train-observed concepts only; OOV (test-only) routed to UNK at idx 0
     train_ids = set(labels.loc[labels["split"] == "train", "subject_id"])
     train_concepts = sorted(
         events.loc[events["subject_id"].isin(train_ids),
                     "concept_node_idx"].unique().tolist()
     )
-    # idx 0 reserved for UNK; train concepts get indices 1..N
     concept_remap = {c: i + 1 for i, c in enumerate(train_concepts)}
-    n_concepts = len(train_concepts) + 1   # +1 for UNK
+    n_concepts = len(train_concepts) + 1
     n_edge_types = len(edge_types)
     all_concepts = events["concept_node_idx"].nunique()
     print(f"  patients={len(labels):,}, events={len(events):,}")
@@ -259,7 +239,6 @@ def _prepare_data():
           f"({n_oov / max(len(events), 1) * 100:.2f}% of events)")
     events = events.sort_values(["subject_id", "relative_days"]).reset_index(drop=True)
 
-    # Default value columns if missing (back-compat with old events.csv)
     if "value_norm" not in events.columns:
         events["value_norm"] = 0.0
     if "value_present" not in events.columns:
@@ -267,7 +246,6 @@ def _prepare_data():
     events["value_norm"] = events["value_norm"].astype(np.float32)
     events["value_present"] = events["value_present"].astype(np.float32)
 
-    # Build per-patient event arrays
     events_by_sid: dict[int, tuple] = {}
     grouped = events.groupby("subject_id")
     for sid, g in grouped:
@@ -279,7 +257,6 @@ def _prepare_data():
             g["value_present"].to_numpy(dtype=np.float32),
         )
 
-    # Patients with no events still need an entry (single padding event)
     for sid in labels["subject_id"]:
         if sid not in events_by_sid:
             events_by_sid[sid] = (
@@ -290,7 +267,7 @@ def _prepare_data():
                 np.zeros(0, dtype=np.float32),
             )
 
-    # Static features — normalize using TRAIN statistics only
+    # Static feature normalization uses training statistics only
     static_cols = ["age_at_index", "cci_score", "num_cardiometa_conditions",
                    "had_icu_stay", "female"]
     train_ids = set(labels.loc[labels["split"] == "train", "subject_id"])
@@ -303,7 +280,7 @@ def _prepare_data():
         static_norm.to_numpy(dtype=np.float32),
     ))
 
-    # --- Multimodal: append per-patient discharge-note BioBERT embedding ----
+    # Append per-patient discharge-note BioBERT embedding to static block
     notes_emb_path = os.path.join(OUTPUT_DIR, "notes", "patient_note_emb.npy")
     notes_csv_path = os.path.join(OUTPUT_DIR, "notes", "patient_note_emb.csv")
     n_static_total = len(static_cols)
@@ -313,7 +290,6 @@ def _prepare_data():
         sid_to_note_row = {int(sid): i for i, sid
                             in enumerate(notes_meta["subject_id"])}
         has_notes_arr = notes_meta["has_notes"].to_numpy(dtype=np.float32)
-        # Z-score note dims using TRAIN patients only (no leakage)
         train_rows = [sid_to_note_row[int(s)] for s in train_ids
                        if int(s) in sid_to_note_row]
         if train_rows:
@@ -378,7 +354,7 @@ def _evaluate(model, loader, device, n_classes=6):
 
 
 def _plot_roc_compare(yte, tgn_proba, baseline_dir, out_path):
-    """6-panel ROC: TGN vs baseline (logreg + xgboost) per endpoint."""
+    """6-panel ROC: TGN vs LogReg + XGBoost per endpoint."""
     preds_b = pd.read_csv(os.path.join(baseline_dir, "predictions_test.csv"))
     preds_b = preds_b.set_index("subject_id")
 
@@ -392,8 +368,8 @@ def _plot_roc_compare(yte, tgn_proba, baseline_dir, out_path):
             ax.set_title(f"{ep} (no positives)")
             continue
         # Note: tgn_proba is aligned to test sids; ensure same order
-        for name, proba in [("logreg", preds_b[f"logreg_p_{ep}"].to_numpy()),
-                             ("xgboost", preds_b[f"xgb_p_{ep}"].to_numpy()),
+        for name, proba in [("LogReg", preds_b[f"logreg_p_{ep}"].to_numpy()),
+                             ("XGBoost", preds_b[f"xgb_p_{ep}"].to_numpy()),
                              ("TGN", tgn_proba[:, j])]:
             fpr, tpr, _ = roc_curve(y_bin, proba)
             try:
@@ -407,7 +383,7 @@ def _plot_roc_compare(yte, tgn_proba, baseline_dir, out_path):
         ax.set_xlabel("FPR")
         ax.set_ylabel("TPR")
         ax.legend(fontsize=9, loc="lower right")
-    fig.suptitle("Figure 6 — Test-set ROC: baselines vs TGN",
+    fig.suptitle("Test-set ROC: baselines vs TGN",
                  fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")

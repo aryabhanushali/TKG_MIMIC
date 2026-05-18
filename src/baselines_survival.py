@@ -1,9 +1,10 @@
-"""Survival baselines (Cox + Gradient Boosting Survival) using the same
-features as baseline.py: bag-of-codes (train concepts) + per-concept value
-summaries (mean/max/min/last/count/slope) + static features.
+"""Survival baselines: elastic-net Cox and XGBoost-Survival.
 
-Trains one cause-specific model per endpoint (other events treated as censored
-at their occurrence time) for fair per-cause comparison vs TGN-survival.
+Both models consume the same feature space as baseline.py: bag-of-codes over
+train-observed concepts, per-concept value summaries (mean/max/min/last/count/
+slope), and static features. One cause-specific model is fit per endpoint, with
+events of other causes treated as censored at their occurrence time
+(cause-specific framing).
 """
 import os
 import numpy as np
@@ -70,16 +71,15 @@ def _build_X(labels, static, events, nodes):
 
 
 def _make_y(labels: pd.DataFrame, cause: str):
-    """Cause-specific Surv. Patients with a different observed event are
-    treated as censored at their event time (standard cause-specific framing)."""
+    """Cause-specific Surv structure for sksurv."""
     event_bool = (labels["endpoint_type"] == cause).to_numpy().astype(bool)
     time = labels["time_to_event_days"].to_numpy(dtype=float)
-    time = np.maximum(time, 1.0)  # sksurv requires positive durations
+    time = np.maximum(time, 1.0)
     return Surv.from_arrays(event_bool, time)
 
 
 def _eval_horizon_auroc(risk_score, labels, cause, horizons):
-    """Per-horizon AUROC: y=1 iff (cause observed and duration<=h), score=risk."""
+    """Per-horizon AUROC: y=1 iff cause observed and duration<=h; score=risk."""
     durs = labels["time_to_event_days"].to_numpy(dtype=float)
     evts = labels["endpoint_type"].to_numpy()
     rows = []
@@ -118,9 +118,7 @@ def run() -> None:
         y_tr = _make_y(labels_tr, cause)
         y_te = _make_y(labels_te, cause)
 
-        # ---- Cox (elastic-net regularized; single alpha, no path search) -
-        # Single regularization point + relaxed tolerance = ~5x speedup over
-        # the default 5-alpha path. Reviewers expect Cox as the baseline.
+        # Single-alpha elastic-net Cox (skips the default 5-alpha path search).
         print("  fitting CoxNet (single-alpha elastic-net Cox)...", flush=True)
         cox = CoxnetSurvivalAnalysis(
             l1_ratio=0.9, alphas=[0.01],
@@ -138,10 +136,7 @@ def run() -> None:
         except Exception as e:
             print(f"    Cox failed: {e}")
 
-        # ---- XGBoost survival (objective=survival:cox; sparse-native) -----
-        # Stronger baseline — XGBoost was the hardest model to beat in the
-        # multiclass setup. Survival:cox uses signed duration encoding:
-        # positive duration = event observed, negative = censored at |t|.
+        # survival:cox encodes durations as +t (event observed) and -t (censored).
         print("  fitting XGBoost (survival:cox)...", flush=True)
         try:
             event_tr = (labels_tr["endpoint_type"] == cause).to_numpy().astype(bool)
@@ -156,7 +151,6 @@ def run() -> None:
                 subsample=0.85, colsample_bytree=0.7,
                 tree_method="hist", n_jobs=-1, random_state=SEED,
             )
-            # XGBoost handles sparse natively — no .toarray() needed
             xgb_clf.fit(X_tr, y_xgb)
             xgb_risk = xgb_clf.predict(X_te)
             xgb_rows = _eval_horizon_auroc(xgb_risk, labels_te, cause, HORIZON_DAYS)

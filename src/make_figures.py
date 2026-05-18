@@ -1,16 +1,13 @@
-"""Paper-quality figure generation.
+"""Paper figures generated from saved test metrics and per-patient predictions.
 
-Produces five additional figures from saved test metrics + per-patient
-predictions, complementing the cohort/TKG figures already produced by
-visualize_tkg.py and the explainability figures from explain*.py.
+Outputs (300 dpi PNG):
 
-    fig5_model_comparison.png        master grouped-bar: 3 horizons x 5 causes x 3 models
-    fig6_roc_5y.png                   ROC curves at 5y horizon, one panel per cause
-    fig7_auroc_by_horizon.png         AUROC trajectory (1y/3y/5y) per cause, line plot
-    fig12_calibration_5y.png          calibration plots at 5y horizon (reliability diagrams)
+    fig5_model_comparison.png    grouped bars: 3 horizons x 5 causes x 3 models
+    fig6_roc_5y.png              ROC curves at 5-year horizon, per cause
+    fig7_auroc_by_horizon.png    AUROC trajectory across 1/3/5-year horizons
+    fig12_calibration_5y.png     reliability diagrams at 5-year horizon
 
-All figures are saved at 300 DPI as PNG. None of these scripts touch the model
-or training; they read pre-computed test metrics + predictions only.
+No model training is invoked from this module.
 """
 import os
 import numpy as np
@@ -32,9 +29,6 @@ CAUSE_COLORS = {"MI": "#d62728", "Stroke": "#9467bd", "HF": "#ff7f0e",
                 "AF": "#1f77b4", "PAD": "#2ca02c"}
 
 
-# --------------------------------------------------------------------------- #
-# Load metrics + predictions                                                  #
-# --------------------------------------------------------------------------- #
 def _load_metrics() -> pd.DataFrame:
     """Combine Cox / XGB-Surv / TGN-Surv test metrics into one long frame."""
     parts = []
@@ -53,7 +47,7 @@ def _load_metrics() -> pd.DataFrame:
 
 
 def _load_predictions():
-    """Per-patient risk scores from baselines + CIF from TGN-Survival."""
+    """Per-patient baseline risk scores and TGN-Survival CIF."""
     base_preds_path = os.path.join(OUTPUT_DIR, "baselines_survival",
                                      "predictions_test.csv")
     tgn_preds_path = os.path.join(OUTPUT_DIR, "tgn_survival",
@@ -66,9 +60,6 @@ def _load_predictions():
     return labels, base, tgn
 
 
-# --------------------------------------------------------------------------- #
-# Figure 5: master grouped-bar comparison                                     #
-# --------------------------------------------------------------------------- #
 def fig5_model_comparison(metrics: pd.DataFrame, out_path: str) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(18, 5.5), sharey=True)
     width = 0.27
@@ -95,21 +86,20 @@ def fig5_model_comparison(metrics: pd.DataFrame, out_path: str) -> None:
         ax.grid(axis="y", alpha=0.3)
         if h == HORIZONS[0]:
             ax.legend(loc="upper left", fontsize=9, frameon=True)
-    fig.suptitle("Figure 5 — Per-cause test AUROC: Cox vs XGBoost-Survival vs TGN-Survival",
+    fig.suptitle("Per-cause test AUROC: Cox vs XGBoost-Survival vs TGN-Survival",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-# --------------------------------------------------------------------------- #
-# Figure 6: ROC curves at 5-year horizon                                      #
-# --------------------------------------------------------------------------- #
 def _binary_labels_for_cause_at_horizon(labels: pd.DataFrame, cause: str,
                                          horizon_days: int):
-    """y, mask in patient order (test only). y=1 if cause observed AND duration<=h.
-    Mask drops censored-before-horizon patients (IPCW-free framing — same as the
-    AUROC eval in tgn_survival.py)."""
+    """Test-set binary labels and inclusion mask for a (cause, horizon) pair.
+
+    y=1 if cause observed AND duration<=h; the mask drops patients censored
+    before h (IPCW-free, matching the AUROC evaluation in tgn_survival.py).
+    """
     labels_test = labels[labels["split"] == "test"].sort_values("subject_id").reset_index(drop=True)
     d = labels_test["time_to_event_days"].to_numpy(dtype=float)
     e = labels_test["endpoint_type"].to_numpy()
@@ -128,12 +118,10 @@ def fig6_roc_at_5y(labels, base_preds, tgn_preds, out_path: str) -> None:
     h = 1825
     for k, cause in enumerate(CAUSES):
         ax = axes[k]
-        # Build ground truth in canonical patient order
         labels_test, y_full, mask = _binary_labels_for_cause_at_horizon(labels, cause, h)
         if y_full.sum() == 0:
             ax.set_title(f"{cause} (no positives)"); continue
 
-        # Cox
         if base_preds is not None and f"cox_risk_{cause}" in base_preds.columns:
             preds = (base_preds.set_index("subject_id")
                        .reindex(labels_test["subject_id"])
@@ -144,7 +132,6 @@ def fig6_roc_at_5y(labels, base_preds, tgn_preds, out_path: str) -> None:
                 ax.plot(fpr, tpr, label=f"Cox (AUC={auc:.3f})",
                         color=MODEL_COLORS["cox"], linewidth=1.5)
 
-        # XGB-Surv
         if base_preds is not None and f"xgb_surv_risk_{cause}" in base_preds.columns:
             preds = (base_preds.set_index("subject_id")
                        .reindex(labels_test["subject_id"])
@@ -155,7 +142,6 @@ def fig6_roc_at_5y(labels, base_preds, tgn_preds, out_path: str) -> None:
                 ax.plot(fpr, tpr, label=f"XGB-Surv (AUC={auc:.3f})",
                         color=MODEL_COLORS["xgb_surv"], linewidth=1.8)
 
-        # TGN-Surv (CIF column)
         if tgn_preds is not None and f"cif_{cause}_at_{h}d" in tgn_preds.columns:
             preds = (tgn_preds.set_index("subject_id")
                        .reindex(labels_test["subject_id"])
@@ -174,16 +160,13 @@ def fig6_roc_at_5y(labels, base_preds, tgn_preds, out_path: str) -> None:
         ax.legend(fontsize=9, loc="lower right")
         ax.grid(alpha=0.3)
     axes[-1].axis("off")
-    fig.suptitle("Figure 6 — Test-set ROC curves at 5-year horizon",
+    fig.suptitle("Test-set ROC curves at 5-year horizon",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-# --------------------------------------------------------------------------- #
-# Figure 7: AUROC trajectory by horizon (line plot per cause × model)         #
-# --------------------------------------------------------------------------- #
 def fig7_auroc_by_horizon(metrics: pd.DataFrame, out_path: str) -> None:
     fig, axes = plt.subplots(1, 5, figsize=(20, 4.5), sharey=True)
     for ax, cause in zip(axes, CAUSES):
@@ -207,16 +190,13 @@ def fig7_auroc_by_horizon(metrics: pd.DataFrame, out_path: str) -> None:
         if cause == CAUSES[0]:
             ax.set_ylabel("test AUROC")
             ax.legend(loc="lower right", fontsize=8)
-    fig.suptitle("Figure 7 — AUROC trajectory across 1-, 3-, 5-year horizons",
+    fig.suptitle("AUROC trajectory across 1-, 3-, 5-year horizons",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-# --------------------------------------------------------------------------- #
-# Figure 12: calibration at 5y horizon                                        #
-# --------------------------------------------------------------------------- #
 def fig12_calibration_5y(labels, base_preds, tgn_preds, out_path: str) -> None:
     if tgn_preds is None and base_preds is None:
         print("  fig12: no predictions; skipping")
@@ -242,8 +222,7 @@ def fig12_calibration_5y(labels, base_preds, tgn_preds, out_path: str) -> None:
             ys = y_full[mask]
             if scores.size < 10 or not np.isfinite(scores).all():
                 continue
-            # Rescale risk scores into [0,1] for plotting (Cox / XGB outputs are
-            # raw partial hazards / log-hazards). TGN CIF is already 0..1.
+            # Rescale Cox/XGB raw partial hazards into [0,1]; CIF is already in [0,1].
             if model_name in ("Cox", "XGB-Surv"):
                 s_min, s_max = scores.min(), scores.max()
                 scores = (scores - s_min) / max(s_max - s_min, 1e-9)
@@ -266,16 +245,13 @@ def fig12_calibration_5y(labels, base_preds, tgn_preds, out_path: str) -> None:
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8, loc="upper left")
     axes[-1].axis("off")
-    fig.suptitle("Figure 12 — Calibration at 5-year horizon (reliability diagrams)",
+    fig.suptitle("Calibration at 5-year horizon (reliability diagrams)",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-# --------------------------------------------------------------------------- #
-# Pipeline                                                                    #
-# --------------------------------------------------------------------------- #
 def make_all() -> None:
     os.makedirs(FIGURES_DIR, exist_ok=True)
     metrics = _load_metrics()

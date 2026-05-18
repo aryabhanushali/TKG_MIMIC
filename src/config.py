@@ -102,12 +102,11 @@ CARDIOMETA_OUTPUT_LABELS = {
     "URINE_OUTPUT": ["urine", "foley", "void"],
 }
 
-CHART_SAMPLE_RATE = 0.10  # vitals are dense (every 1-5 min); 10% keeps trajectories
+CHART_SAMPLE_RATE = 0.10  # vitals are dense (1-5 min); 10% preserves trajectories
 
 
-# Reference LOINC list (documented; not used directly).
-# MIMIC-IV labevents has itemid, and d_labitems has no LOINC column,
-# so we match by label substrings below.
+# LOINC reference list; not used at runtime (MIMIC labevents lacks a LOINC
+# column, so matching is done via the label substrings below).
 CARDIOMETA_LOINC = [
     "2345-7", "4548-4", "2093-3", "2085-9", "13457-7", "2571-8",
     "2160-0", "3094-0", "33762-6", "42757-5", "10839-9", "6598-7",
@@ -115,9 +114,8 @@ CARDIOMETA_LOINC = [
     "1742-6", "1920-8", "1975-2", "2532-0", "14682-9", "2028-9",
 ]
 
-# Label substrings to match against d_labitems.label.
-# Key = LOINC-equivalent concept name (used as concept_id prefix).
-# Values are case-insensitive substrings; first matching itemid set wins.
+# Label substrings (case-insensitive) matched against d_labitems.label.
+# Key = LOINC-equivalent concept name used as the concept_id prefix.
 CARDIOMETA_LAB_LABELS = {
     "GLUCOSE":       ["glucose"],
     "HBA1C":         ["hemoglobin a1c", "hba1c", "% hemoglobin a1c"],
@@ -144,8 +142,7 @@ CARDIOMETA_LAB_LABELS = {
     "BICARBONATE":   ["bicarbonate"],
 }
 
-# Charlson Comorbidity Index mapping.
-# Each entry: weight + ICD-10 prefixes + ICD-9 prefixes.
+# Charlson Comorbidity Index: per-condition weight + ICD-10 and ICD-9 prefixes.
 CCI_WEIGHTS = {
     "MI":               {"w": 1, "icd10": ["I21", "I22", "I252"],
                          "icd9":  ["410", "412"]},

@@ -1,21 +1,15 @@
 """Discriminative attention analysis.
 
-The absolute attention figure (`fig9_concept_importance_by_cause.png`) is
-dominated by cohort-entry conditions (HTN, dyslipidemia, T2D) because those
-are the patients' inclusion criteria. To surface endpoint-SPECIFIC signal we
-compute, for each (cause, concept) pair:
+The raw attention totals in fig9 are dominated by the cohort-entry conditions
+(HTN, dyslipidemia, T2D), which every patient carries. To surface endpoint-
+specific signal, we compute per (cause, concept):
 
-    share(k | c)  = total attention on concept k from patients with cause c
-                    ----------------------------------------------------
-                    total attention from patients with cause c
+    share(k | c) = sum_attention(k, c) / total_attention(c)
+    lift(k, c)   = share(k | c) - mean over other causes c' of share(k | c')
 
-    lift(k, c)    = share(k | c)  -  mean_{c' != c} share(k | c')
+High-lift concepts are the endpoint-discriminative risk factors learned by
+the model. Outputs:
 
-Concepts with high lift are attended to *more often when the model predicts
-this specific endpoint* than for any other endpoint -- i.e., they are the
-endpoint-discriminative risk factors the model has learned.
-
-Outputs:
     tkg_output/explain/discriminative_concepts_by_cause.csv
     tkg_output/figures/fig11_discriminative_concepts_by_cause.png
 """
@@ -43,7 +37,6 @@ def run() -> None:
 
     sid_to_label = dict(zip(labels["subject_id"], labels["endpoint_type"]))
     per_patient["endpoint"] = per_patient["subject_id"].map(sid_to_label)
-    # Re-map concept_emb_idx to concept_id for readability (same logic as explain.py)
     events = pd.read_csv(
         os.path.join(MODELING_DIR, "events.csv"),
         usecols=["subject_id", "concept_node_idx"], low_memory=False,
@@ -64,7 +57,6 @@ def run() -> None:
     per_patient["concept_id"] = per_patient["concept_emb_idx"].map(emb_to_cid)
     per_patient["fact_type"] = per_patient["concept_emb_idx"].map(emb_to_ft)
 
-    # Compute within-cause share for each concept (sum_attention / cause_total_attention)
     shares = {}
     n_patients_per_cause = {}
     for cause in CAUSES:
@@ -83,11 +75,9 @@ def run() -> None:
         shares[cause] = per_concept.set_index("concept_id")
         n_patients_per_cause[cause] = int(sub["subject_id"].nunique())
 
-    # Build full concept universe (concepts that appeared in any cause's top-K)
     all_concepts = sorted(set().union(*[s.index for s in shares.values() if not s.empty]))
     print(f"  concept universe: {len(all_concepts):,} concepts")
 
-    # For each cause, compute lift = share(k|c) - mean_{c'!=c} share(k|c')
     rows = []
     for cause in CAUSES:
         s_c = shares[cause]
@@ -120,7 +110,6 @@ def run() -> None:
     out_csv = os.path.join(EXPLAIN_DIR, "discriminative_concepts_by_cause.csv")
     df.sort_values(["cause", "lift"], ascending=[True, False]).to_csv(out_csv, index=False)
 
-    # Pretty-print top-N per cause
     print(f"\n=== TOP {TOP_N} DISCRIMINATIVE CONCEPTS PER CAUSE "
           f"(min {MIN_PATIENTS} TP patients) ===")
     for cause in CAUSES:
@@ -134,7 +123,6 @@ def run() -> None:
                    "share_in_other_causes_mean", "pct_tp_with_concept"]]
               .round(4).to_string(index=False))
 
-    # Figure: per-cause top-N discriminative concepts
     fig, axes = plt.subplots(1, 5, figsize=(22, 8))
     for ax, cause in zip(axes, CAUSES):
         sub = (df[df["cause"] == cause]
@@ -146,8 +134,8 @@ def run() -> None:
         ax.set_title(f"{cause}\n(lift over other causes)", fontweight="bold")
         ax.set_xlabel("attention share lift")
         ax.tick_params(axis="y", labelsize=8)
-    fig.suptitle("Figure 11 — Discriminative TKG concepts by endpoint "
-                 "(model attention share over other causes)",
+    fig.suptitle("Discriminative TKG concepts by endpoint "
+                 "(attention share lift over other causes)",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     out_fig = os.path.join(FIGURES_DIR, "fig11_discriminative_concepts_by_cause.png")

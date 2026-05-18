@@ -21,7 +21,7 @@ def compare() -> None:
         print("No metrics files found.")
         return
     df = pd.concat(parts, ignore_index=True)
-    print("\n=== TEST AUROC — per cause × horizon × model ===")
+    print("\n=== TEST AUROC by cause, horizon, and model ===")
     for h in sorted(df["horizon_days"].unique()):
         sub = df[df["horizon_days"] == h]
         pv = sub.pivot(index="cause", columns="model", values="auroc")

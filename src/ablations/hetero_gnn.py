@@ -16,13 +16,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-from sklearn.metrics import (
-    roc_auc_score, average_precision_score, roc_curve,
-    f1_score, accuracy_score, log_loss,
-)
+from sklearn.metrics import roc_auc_score, roc_curve, f1_score, accuracy_score
 from torch_geometric.nn import RGCNConv
 
-from src.config import OUTPUT_DIR, FIGURES_DIR, SEED
+from src.config import OUTPUT_DIR, FIGURES_DIR
 from src.tgn_model import (
     TimeEncoder, PatientEventsDataset, collate,
     ENDPOINT_ORDER, EP_TO_IDX,
@@ -321,7 +318,7 @@ def _plot_roc_compare(yte, hetero_proba, out_path):
         ax.set_xlabel("FPR")
         ax.set_ylabel("TPR")
         ax.legend(fontsize=8, loc="lower right")
-    fig.suptitle("Figure 7 — Test ROC: baselines vs TGN vs Hetero-GNN",
+    fig.suptitle("Test ROC: baselines vs TGN vs Hetero-GNN",
                  fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")

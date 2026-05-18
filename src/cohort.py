@@ -1,6 +1,5 @@
 """Build the cardiometabolic -> circulatory endpoint cohort."""
 import os
-import sys
 import numpy as np
 import pandas as pd
 
@@ -14,10 +13,9 @@ from src.config import (
 
 
 def _icd_matches_any(code_series: pd.Series, prefixes) -> pd.Series:
-    """Return boolean mask: True if code starts with any of the given prefixes."""
+    """Boolean mask: True where the code starts with any of the given prefixes."""
     if len(prefixes) == 0:
         return pd.Series(False, index=code_series.index)
-    pattern = "^(" + "|".join([p for p in prefixes]) + ")"
     return code_series.str.startswith(tuple(prefixes), na=False)
 
 
@@ -35,11 +33,8 @@ def _classify_dx(dx: pd.DataFrame, mapping_icd10, mapping_icd9) -> pd.DataFrame:
 
 
 def _compute_cci(dx_at_index: pd.DataFrame) -> int:
-    """Compute Charlson Comorbidity Index from a patient's index-admission diagnoses."""
+    """Charlson Comorbidity Index from index-admission diagnoses."""
     score = 0
-    has_liver_severe = False
-    has_diabetes_comp = False
-    has_mets = False
     flags = {}
     for cond, spec in CCI_WEIGHTS.items():
         m10 = (dx_at_index["icd_version"] == 10) & _icd_matches_any(
@@ -47,7 +42,7 @@ def _compute_cci(dx_at_index: pd.DataFrame) -> int:
         m9 = (dx_at_index["icd_version"] == 9) & _icd_matches_any(
             dx_at_index["icd_code"], spec["icd9"])
         flags[cond] = bool((m10 | m9).any())
-    # Hierarchical rules: severe overrides mild; complicated overrides non-comp.
+    # CCI hierarchy: severe overrides mild; complicated overrides non-complicated.
     if flags["Liver_severe"]:
         flags["Liver_mild"] = False
     if flags["Diabetes_comp"]:
@@ -183,7 +178,6 @@ def build_cohort() -> pd.DataFrame:
     cohort["follow_up_days"] = cohort.apply(_followup, axis=1)
 
     # Apply exclusions
-    n_start = len(cohort)
     cohort = cohort[~cohort["subject_id"].isin(pts_endpoint_before)]
     n_after_no_prior_ep = len(cohort)
     # Count of admissions per patient

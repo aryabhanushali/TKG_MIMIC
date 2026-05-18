@@ -40,9 +40,9 @@ def aggregate_notes() -> None:
     print(f"  cohort: {len(cohort):,}, notes: {len(meta):,}, "
           f"embeddings: {emb.shape}")
 
-    # Pre-index (strict) — matches the prognostic-at-admit cutoff used for
-    # every other modality in prep_modeling.py. No modality sees data from
-    # time points that another modality does not.
+    # Strict pre-index cutoff: matches the prognostic-at-admit cutoff used by
+    # every other modality in prep_modeling.py so no modality sees data from
+    # a time point another modality does not.
     meta = meta.merge(cohort[["subject_id", "index_date"]],
                        on="subject_id", how="inner")
     meta = meta[meta["charttime"] < meta["index_date"]].copy()

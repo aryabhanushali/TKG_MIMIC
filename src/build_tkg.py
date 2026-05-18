@@ -163,8 +163,8 @@ def _prescription_facts(windows: pd.DataFrame) -> pd.DataFrame:
 
 def _resolve_itemids_by_label(d_items: pd.DataFrame,
                                label_dict: dict) -> dict[int, str]:
-    """Map d_items.itemid -> concept name using substring matching against
-    the label column. First-match wins (dict iteration order matters)."""
+    """Map d_items.itemid to a concept name by substring-matching the label
+    column. First match wins (dict iteration order matters)."""
     d_items = d_items.copy()
     d_items["label_l"] = d_items["label"].astype(str).str.lower()
     itemid_to_concept: dict[int, str] = {}
@@ -342,9 +342,8 @@ def _chartevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
     print(f"  resolved {len(item_ids)} chartevent itemids across "
           f"{len(CARDIOMETA_CHART_LABELS)} concept groups")
     by_concept = {}
-    for iid, c in itemid_to_concept.items():
-        by_concept.setdefault(c, 0)
-        by_concept[c] += 1
+    for c in itemid_to_concept.values():
+        by_concept[c] = by_concept.get(c, 0) + 1
     for c, n in by_concept.items():
         print(f"    {c:<14s}: {n} itemids")
 
@@ -473,6 +472,9 @@ def _outputevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_tkg(cohort_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    # cohort_df is accepted for orchestrator compatibility; the cohort is always
+    # re-read from disk so this script can also be invoked standalone.
+    del cohort_df
     print("[1] Loading cohort and computing per-patient windows...")
     cohort, windows = _load_cohort_windows()
     print(f"  cohort patients: {len(cohort):,}")

@@ -19,9 +19,11 @@ FACT_TYPE_ORDER = ["diagnosis", "procedure", "prescription",
 
 
 def _figure1_consort(cohort: pd.DataFrame, out_dir: str) -> None:
-    """CONSORT-style flow + endpoint pie."""
-    # Numbers come from the cohort.csv summary. Hard-coded labels reflect
-    # the same exclusion cascade printed by build_cohort().
+    """CONSORT-style flow + endpoint pie.
+
+    Step counts come from cohort.csv and the exclusion-cascade summary
+    printed by `build_cohort()`.
+    """
     steps = [
         ("All MIMIC-IV patients",              364_627),
         ("Adult-age admissions",               223_452),
@@ -41,7 +43,6 @@ def _figure1_consort(cohort: pd.DataFrame, out_dir: str) -> None:
     fig = plt.figure(figsize=(14, 8))
     gs = fig.add_gridspec(1, 2, width_ratios=[1.3, 1.0], wspace=0.25)
 
-    # Left: CONSORT flow
     ax = fig.add_subplot(gs[0, 0])
     ax.set_xlim(0, 10)
     ax.set_ylim(0, len(steps) + 1)
@@ -62,7 +63,6 @@ def _figure1_consort(cohort: pd.DataFrame, out_dir: str) -> None:
                     ha="left", va="center", fontsize=9, color="#990000")
     ax.set_title("Cohort selection flow", fontsize=12, fontweight="bold")
 
-    # Right: pie of endpoints
     ax2 = fig.add_subplot(gs[0, 1])
     cls = cohort["endpoint_type"].value_counts().reindex(ENDPOINT_ORDER).fillna(0).astype(int)
     colors = [ENDPOINT_PALETTE[e] for e in cls.index]
@@ -72,12 +72,11 @@ def _figure1_consort(cohort: pd.DataFrame, out_dir: str) -> None:
     )
     ax2.set_title(f"Endpoint distribution (N = {len(cohort):,})",
                   fontsize=12, fontweight="bold")
-    # legend with counts
     legend_labels = [f"{e}: {cls[e]:,}" for e in cls.index]
     ax2.legend(wedges, legend_labels, loc="center left", bbox_to_anchor=(1.05, 0.5),
                fontsize=9, frameon=False)
 
-    fig.suptitle("Figure 1 — Cohort CONSORT", fontsize=13, fontweight="bold", y=0.98)
+    fig.suptitle("Cohort CONSORT", fontsize=13, fontweight="bold", y=0.98)
     out = os.path.join(out_dir, "fig1_consort.png")
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -89,7 +88,6 @@ def _figure2_facts_distribution(facts: pd.DataFrame, out_dir: str) -> None:
     pivot = (facts.groupby(["endpoint_type", "fact_type"]).size()
              .unstack(fill_value=0).reindex(ENDPOINT_ORDER)
              [FACT_TYPE_ORDER])
-    # Normalize per row to mean per patient for fair comparison
     pt_counts = facts.groupby("endpoint_type")["subject_id"].nunique().reindex(ENDPOINT_ORDER)
     pivot_perpt = pivot.div(pt_counts, axis=0)
 
@@ -112,7 +110,7 @@ def _figure2_facts_distribution(facts: pd.DataFrame, out_dir: str) -> None:
     axes[1].legend(title="fact_type", bbox_to_anchor=(1.02, 1), loc="upper left",
                    fontsize=9)
 
-    fig.suptitle("Figure 2 — TKG composition by endpoint class",
+    fig.suptitle("TKG composition by endpoint class",
                  fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     out = os.path.join(out_dir, "fig2_facts_distribution.png")
@@ -122,12 +120,10 @@ def _figure2_facts_distribution(facts: pd.DataFrame, out_dir: str) -> None:
 
 
 def _figure3_temporal_density(facts: pd.DataFrame, out_dir: str) -> None:
-    """KDE of relative_days, per endpoint class, faceted by fact_type."""
-    # Subsample for speed
+    """KDE of relative_days per endpoint class, faceted by fact_type."""
     df = facts[["relative_days", "endpoint_type", "fact_type"]].dropna()
     if len(df) > 1_500_000:
         df = df.sample(n=1_500_000, random_state=42)
-    # Clip x range so the heavy censored tail does not dominate
     df = df[(df["relative_days"] >= -365) & (df["relative_days"] <= 1500)]
 
     ft_present = [f for f in FACT_TYPE_ORDER if f in df["fact_type"].unique()]
@@ -153,7 +149,7 @@ def _figure3_temporal_density(facts: pd.DataFrame, out_dir: str) -> None:
             ax.legend(fontsize=8, title="endpoint", loc="upper right")
     for j in range(i + 1, len(axes)):
         axes[j].axis("off")
-    fig.suptitle("Figure 3 — Temporal density of facts relative to index date",
+    fig.suptitle("Temporal density of facts relative to index date",
                  fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     out = os.path.join(out_dir, "fig3_temporal_density.png")
@@ -176,7 +172,7 @@ def _figure4_top_concepts(facts: pd.DataFrame, out_dir: str) -> None:
     ax.barh(top["concept_id"], top["n"], color=bar_colors)
     for i, (cnt, ft) in enumerate(zip(top["n"], top["fact_type"])):
         ax.text(cnt, i, f"  {cnt:,}", va="center", fontsize=8)
-    ax.set_title("Figure 4 — Top-20 concept nodes by frequency",
+    ax.set_title("Top-20 concept nodes by frequency",
                  fontsize=13, fontweight="bold")
     ax.set_xlabel("count")
     handles = [mpatches.Patch(color=ft_to_color[ft], label=ft)

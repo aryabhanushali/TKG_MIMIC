@@ -1,21 +1,17 @@
 """Multiclass baselines (LogReg + XGBoost on bag-of-codes + value summaries).
 
-NOTE: The main paper path now uses competing-risks SURVIVAL framing
-(`baselines_survival.py` + `tgn_survival.py`). This module is kept for two
-reasons:
+The main pipeline uses the survival framing in `baselines_survival.py` and
+`tgn_survival.py`. This module is kept because:
 
-  1. It provides the feature-construction helpers `_build_bag_of_codes` and
-     `_build_value_summary_features` that `baselines_survival.py` imports.
-  2. `run_baseline()` produces the multiclass-softmax baselines (LogReg,
-     XGBoost) reported as a sensitivity analysis / ablation in the paper.
+  - it provides the feature builders `_build_bag_of_codes` and
+    `_build_value_summary_features`, both imported by `baselines_survival.py`;
+  - `run_baseline()` produces the multiclass-softmax sensitivity analysis.
 
-All feature normalization, concept-space restriction, and class weighting
-use the TRAINING split only. The test set is used exactly once at the end.
+Concept space, normalization, and class weighting are all training-only;
+test predictions are produced once at the end.
 """
 import os
-import json
 import warnings
-from itertools import product
 
 import numpy as np
 import pandas as pd
@@ -26,7 +22,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     roc_auc_score, average_precision_score,
-    f1_score, accuracy_score, log_loss, brier_score_loss,
+    f1_score, accuracy_score, log_loss,
 )
 import matplotlib.pyplot as plt
 import xgboost as xgb
@@ -88,7 +84,6 @@ def _build_value_summary_features(
     if val_events.empty:
         return np.zeros((len(patient_order), 0), dtype=np.float32), []
 
-    # Sort by time so 'last' is well-defined
     val_events = val_events.sort_values(["subject_id", "relative_days"])
     pid_to_row = {pid: i for i, pid in enumerate(patient_order)}
     nodes_by_idx = nodes.set_index("node_idx")
@@ -103,15 +98,14 @@ def _build_value_summary_features(
     aggs = grouped.agg(["mean", "max", "min", "last", "count"]).reset_index()
     aggs = aggs[aggs["subject_id"].isin(pid_to_row)]
 
-    # Slope of value vs relative_days (least-squares); 0 if <2 unique time points.
     def _slope(g: pd.DataFrame) -> float:
+        """OLS slope of value vs relative_days; 0 if <2 unique time points."""
         if len(g) < 2:
             return 0.0
         x = g["relative_days"].to_numpy(dtype=np.float64)
         y = g["value_num"].to_numpy(dtype=np.float64)
         if np.allclose(x.std(), 0.0):
             return 0.0
-        # cov(x,y)/var(x)
         xm, ym = x.mean(), y.mean()
         denom = ((x - xm) ** 2).sum()
         if denom == 0.0:
@@ -136,7 +130,6 @@ def _build_value_summary_features(
         arr[i, base + 4] = r.count
         arr[i, base + 5] = slope_map.get((r.subject_id, r.concept_node_idx), 0.0)
 
-    # Z-score using train statistics for each column
     train_mask = np.array([pid in train_ids for pid in patient_order])
     mu = arr[train_mask].mean(axis=0)
     sd = arr[train_mask].std(axis=0)
@@ -144,7 +137,6 @@ def _build_value_summary_features(
     arr = (arr - mu) / sd
     arr = np.clip(arr, -10.0, 10.0).astype(np.float32)
 
-    # Build readable column names (LAB_GLUCOSE_mean, etc.)
     stat_names = ["mean", "max", "min", "last", "count", "slope"]
     col_names: list[str] = []
     for c in feat_concepts:
@@ -213,7 +205,7 @@ def _plot_roc(y_true_idx: np.ndarray, proba_by_model: dict[str, np.ndarray],
         ax.set_xlabel("FPR")
         ax.set_ylabel("TPR")
         ax.legend(fontsize=9, loc="lower right")
-    fig.suptitle("Figure 5 — Baseline ROC curves (test set, one-vs-rest)",
+    fig.suptitle("Baseline ROC curves (test set, one-vs-rest)",
                  fontsize=13, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -226,20 +218,17 @@ def run_baseline() -> None:
 
     labels, static, events, nodes = _load_data()
 
-    # Lock canonical patient order (consistent with labels)
     labels = labels.sort_values("subject_id").reset_index(drop=True)
     static = static.sort_values("subject_id").reset_index(drop=True)
     assert (labels["subject_id"].to_numpy() == static["subject_id"].to_numpy()).all()
     patient_order = labels["subject_id"].tolist()
 
-    # Build target: 6-class endpoint idx (0..4 = endpoints, 5 = censored)
     y = labels["endpoint_type"].map(EP_TO_IDX).to_numpy()
     split = labels["split"].to_numpy()
     train_mask = split == "train"
     val_mask = split == "val"
     test_mask = split == "test"
 
-    # Bag-of-codes feature space — train-observed concepts only (no test leak)
     print("\nBuilding bag-of-codes from pre-index events (train concepts only)...")
     train_ids_set = set(np.array(patient_order)[train_mask].tolist())
     train_events_mask = events["subject_id"].isin(train_ids_set)
@@ -252,21 +241,18 @@ def run_baseline() -> None:
     print(f"  bag-of-codes: shape={X_bow.shape}, "
           f"nnz={X_bow.nnz:,} ({X_bow.nnz / (X_bow.shape[0]*X_bow.shape[1]):.4%})")
 
-    # Per-lab/vital summary stats (so XGBoost can also see numeric values)
     print("\nBuilding per-concept value summary features "
           "(mean/max/min/last/count/slope)...")
     X_values, value_col_names = _build_value_summary_features(
         events, patient_order, nodes, train_ids_set)
     print(f"  value summary features: {X_values.shape}")
 
-    # Static dense features
     static_cols = ["age_at_index", "cci_score", "num_cardiometa_conditions",
                    "had_icu_stay", "female"]
     X_static = static[static_cols].to_numpy(dtype=np.float32)
     scaler = StandardScaler().fit(X_static[train_mask])
     X_static_scaled = scaler.transform(X_static)
 
-    # Combine: sparse bow ++ dense value summaries ++ dense static
     X = hstack([
         X_bow,
         sparse.csr_matrix(X_values),
@@ -280,7 +266,6 @@ def run_baseline() -> None:
 
     print(f"\nTrain: {Xtr.shape[0]:,}  Val: {Xva.shape[0]:,}  Test: {Xte.shape[0]:,}")
 
-    # ---- Logistic Regression -------------------------------------------------
     print("\n[1/2] Fitting LogisticRegression (multinomial, class-balanced)...")
     lr = LogisticRegression(
         solver="saga", penalty="l2", C=1.0, max_iter=200,
@@ -292,9 +277,7 @@ def run_baseline() -> None:
     proba_lr_te = lr.predict_proba(Xte)
     print("  done.")
 
-    # ---- XGBoost -------------------------------------------------------------
     print("\n[2/2] Fitting XGBoost (multi:softprob)...")
-    # Class weights (inverse frequency)
     n_classes = len(ENDPOINT_ORDER)
     counts = np.bincount(ytr, minlength=n_classes).astype(float)
     inv = (1.0 / counts) * counts.sum() / n_classes
@@ -312,7 +295,6 @@ def run_baseline() -> None:
     proba_xgb_te = xgb_clf.predict_proba(Xte)
     print(f"  best iteration: {xgb_clf.best_iteration}")
 
-    # ---- Evaluate -----------------------------------------------------------
     print("\n=== METRICS ===")
     rows = []
     for split_name, (y_eval, proba_lr, proba_xgb) in [
@@ -335,7 +317,6 @@ def run_baseline() -> None:
     metrics_path = os.path.join(BASELINE_DIR, "metrics.csv")
     metrics_df.to_csv(metrics_path, index=False)
 
-    # Pretty-print test-set per-endpoint table
     print("\nPer-endpoint AUROC / AUPRC on test:")
     for model_name in ("logreg", "xgboost"):
         sub = metrics_df[(metrics_df["model"] == model_name)
@@ -352,7 +333,6 @@ def run_baseline() -> None:
               f"weightedF1={ov['weighted_f1']:.3f}  "
               f"logloss={ov['log_loss']:.3f}")
 
-    # ---- Save predictions ---------------------------------------------------
     print("\nSaving test predictions...")
     preds = pd.DataFrame({
         "subject_id": labels.loc[test_mask, "subject_id"].to_numpy(),
@@ -364,14 +344,10 @@ def run_baseline() -> None:
     preds_path = os.path.join(BASELINE_DIR, "predictions_test.csv")
     preds.to_csv(preds_path, index=False)
 
-    # ---- Feature importance from XGBoost ------------------------------------
     print("Saving XGBoost feature importance (top 50)...")
     booster = xgb_clf.get_booster()
     importance = booster.get_score(importance_type="gain")
-    # Feature layout:
-    #   [0, n_concepts)              -> bag-of-codes
-    #   [n_concepts, n_concepts+n_v) -> value summary features
-    #   [...)                         -> static features
+    # Column layout: bag-of-codes | value summaries | static
     n_concepts = len(concept_ids)
     n_value = len(value_col_names)
     rows = []
@@ -396,7 +372,6 @@ def run_baseline() -> None:
     fi_path = os.path.join(BASELINE_DIR, "xgb_feature_importance_top50.csv")
     fi.to_csv(fi_path, index=False)
 
-    # ---- ROC figure ---------------------------------------------------------
     roc_path = os.path.join(FIGURES_DIR, "fig5_baseline_roc.png")
     _plot_roc(yte, {"logreg": proba_lr_te, "xgboost": proba_xgb_te}, roc_path)
     print(f"\nSaved:")

@@ -1,15 +1,12 @@
 """TKG temporal model with DeepHit-style competing-risks survival head.
 
-Reuses the TKGTransformer encoder from tgn_model.py but replaces the 6-class
-softmax with a discrete-time cause-specific hazard head. Loss is the
-DeepHit NLL term (Lee et al. 2018). We skip the ranking term for simplicity
-(can be added later); the NLL alone gives a competing-risks model.
+Reuses the TKGTransformer encoder from tgn_model.py and replaces the 6-class
+softmax with a discrete-time cause-specific hazard head. The loss is the
+DeepHit NLL term (Lee et al. 2018); the ranking term is omitted.
 
-Output per patient: PMF over (cause, time_bin) -> can be cumulated to cumulative
-incidence functions (CIF) per cause.
-
-Evaluation: per-cause time-dependent AUROC at fixed horizons (1y / 3y / 5y) and
-cause-specific concordance via sksurv.
+Each patient is mapped to a PMF over (cause, time_bin), then cumulated to a
+cumulative incidence function (CIF) per cause. Evaluation: per-cause AUROC at
+1-, 3-, and 5-year horizons.
 """
 import os
 import time
@@ -20,11 +17,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_auc_score, roc_curve, average_precision_score
+from sklearn.metrics import roc_auc_score, average_precision_score
 
-from src.config import OUTPUT_DIR, FIGURES_DIR, SEED
+from src.config import OUTPUT_DIR, FIGURES_DIR
 from src.tgn_model import (
-    TKGTransformer,           # encoder we reuse
+    TKGTransformer,
     PatientEventsDataset, collate,
     MAX_SEQ_LEN, D_MODEL, N_HEADS, N_LAYERS, DROPOUT,
     BATCH_SIZE, LR, WEIGHT_DECAY, EPOCHS, PATIENCE,
@@ -36,17 +33,13 @@ MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
 
 # Competing-risks setup: 5 cause-specific endpoints + censored
 CAUSES = ["MI", "Stroke", "HF", "AF", "PAD"]
-CAUSE_TO_IDX = {c: i + 1 for i, c in enumerate(CAUSES)}   # 0=censored, 1..5=cause
+CAUSE_TO_IDX = {c: i + 1 for i, c in enumerate(CAUSES)}
 NUM_CAUSES = len(CAUSES)
-NUM_TIME_BINS = 12              # discrete time points (quantile-based)
+NUM_TIME_BINS = 12
 
-# Evaluation horizons (days from index)
-HORIZON_DAYS = [365, 1095, 1825]  # 1y, 3y, 5y
+HORIZON_DAYS = [365, 1095, 1825]
 
 
-# --------------------------------------------------------------------------- #
-# Discrete-time helpers                                                       #
-# --------------------------------------------------------------------------- #
 def _make_time_bins(train_durations: np.ndarray, num_bins: int) -> np.ndarray:
     """Quantile-based time bin edges from training durations.
     Returns array of length num_bins+1: edges[0] = 0, edges[-1] = max+epsilon."""
@@ -67,19 +60,18 @@ def _discretize(duration: np.ndarray, edges: np.ndarray) -> np.ndarray:
     return np.clip(idx, 0, len(edges) - 2).astype(np.int64)
 
 
-# --------------------------------------------------------------------------- #
-# Model                                                                       #
-# --------------------------------------------------------------------------- #
 class TKGSurvivalNet(nn.Module):
-    """TKGTransformer encoder + cause-specific discrete-time hazard head."""
+    """TKGTransformer encoder + cause-specific discrete-time hazard head.
+
+    The encoder's classification head is repurposed to emit
+    ``num_causes * num_time_bins`` logits, which are then reshaped into the
+    (cause, time) grid used by the DeepHit NLL.
+    """
     def __init__(self, n_concepts, n_edge_types, n_static,
                  num_causes=NUM_CAUSES, num_time_bins=NUM_TIME_BINS,
                  d_model=D_MODEL, n_heads=N_HEADS, n_layers=N_LAYERS,
                  dropout=DROPOUT):
         super().__init__()
-        # Reuse the existing TGN encoder, but replace its final head with identity.
-        # We keep the encoder's internals (concept emb / edge emb / time / value
-        # / transformer / attention pool) and then put our own head on top.
         self.encoder = TKGTransformer(
             n_concepts=n_concepts, n_edge_types=n_edge_types,
             n_static=n_static, n_classes=num_causes * num_time_bins,
@@ -91,7 +83,6 @@ class TKGSurvivalNet(nn.Module):
 
     def forward(self, concept_idx, edge_type_idx, t, v_norm, v_present,
                 static, mask, return_attention: bool = False):
-        # encoder returns (B, num_causes * num_time_bins) logits
         if return_attention:
             flat, attn = self.encoder(
                 concept_idx, edge_type_idx, t,
@@ -103,9 +94,6 @@ class TKGSurvivalNet(nn.Module):
         return flat.view(-1, self.num_causes, self.num_time_bins)
 
 
-# --------------------------------------------------------------------------- #
-# DeepHit NLL loss (competing risks, no ranking term)                         #
-# --------------------------------------------------------------------------- #
 def deephit_nll(logits: torch.Tensor,
                 duration_idx: torch.Tensor,
                 event_idx: torch.Tensor) -> torch.Tensor:
@@ -124,8 +112,7 @@ def deephit_nll(logits: torch.Tensor,
     log_surv = torch.log(surv)                                  # (B, T)
 
     is_censored = (event_idx == 0)
-    cause_for_event = (event_idx - 1).clamp(min=0)              # safe placeholder for censored
-    # Pick log-prob at (subject, cause, bin) for observed events
+    cause_for_event = (event_idx - 1).clamp(min=0)
     obs_log_prob = log_probs.gather(
         1, cause_for_event.view(B, 1, 1).expand(-1, 1, T)
     ).squeeze(1)                                                # (B, T)
@@ -136,9 +123,6 @@ def deephit_nll(logits: torch.Tensor,
     return loss.mean()
 
 
-# --------------------------------------------------------------------------- #
-# Data prep                                                                   #
-# --------------------------------------------------------------------------- #
 def _prepare_survival_targets(labels_df: pd.DataFrame, time_edges: np.ndarray):
     """Returns dict: subject_id -> (duration_idx, event_idx)."""
     out = {}
@@ -156,8 +140,9 @@ def _prepare_survival_targets(labels_df: pd.DataFrame, time_edges: np.ndarray):
     return out
 
 
-def _evaluate_survival(model, loader, device, time_edges, horizons):
-    """Predict CIF and evaluate per-cause AUROC at fixed time horizons."""
+def _evaluate_survival(model, loader, device):
+    """Run the model on `loader` and return per-patient cumulative incidence
+    functions (CIF) of shape (N, C, T)."""
     model.eval()
     cif_all, sid_all = [], []
     with torch.no_grad():
@@ -174,7 +159,7 @@ def _evaluate_survival(model, loader, device, time_edges, horizons):
             cif = torch.cumsum(probs, dim=-1).cpu().numpy()      # (B, C, T)
             cif_all.append(cif)
             sid_all.append(batch["sid"].numpy())
-    cif_arr = np.concatenate(cif_all, axis=0)                     # (N, C, T)
+    cif_arr = np.concatenate(cif_all, axis=0)
     sids = np.concatenate(sid_all, axis=0)
     return cif_arr, sids
 
@@ -183,10 +168,12 @@ def _per_cause_auroc_at_horizons(cif: np.ndarray, sids: np.ndarray,
                                   labels_df: pd.DataFrame,
                                   time_edges: np.ndarray,
                                   horizons: list[int]) -> pd.DataFrame:
-    """Per-cause AUROC at each horizon.
-    For cause c at horizon h: label = (event_observed == c AND duration <= h).
-    Score = CIF_c at the bin containing horizon h.
-    Censored before h are excluded (basic IPCW-free framing)."""
+    """Per-cause AUROC at each horizon h.
+
+    For cause c at horizon h: label = (observed cause == c AND duration <= h);
+    score = CIF_c at the bin containing h. Patients censored before h are
+    excluded (IPCW-free).
+    """
     durs = dict(zip(labels_df["subject_id"], labels_df["time_to_event_days"]))
     evts = dict(zip(labels_df["subject_id"], labels_df["endpoint_type"]))
     rows = []
@@ -199,14 +186,10 @@ def _per_cause_auroc_at_horizons(cif: np.ndarray, sids: np.ndarray,
                 e = evts.get(int(sid), "censored")
                 if pd.isna(d):
                     continue
-                # Positive: this cause observed before horizon
                 if e == cause and d <= h_days:
                     y.append(1); p.append(cif[i, c_idx, h_bin])
-                # Negative: definitely no event by horizon (either follow-up extends past h
-                # with no event, or other cause AFTER horizon)
                 elif d >= h_days:
                     y.append(0); p.append(cif[i, c_idx, h_bin])
-                # Otherwise: censored or other-cause before h -> drop (uninformative)
             y, p = np.array(y), np.array(p)
             if y.sum() == 0 or y.sum() == len(y):
                 rows.append({"cause": cause, "horizon_days": h_days,
@@ -222,20 +205,17 @@ def _per_cause_auroc_at_horizons(cif: np.ndarray, sids: np.ndarray,
     return pd.DataFrame(rows)
 
 
-# --------------------------------------------------------------------------- #
-# Train                                                                       #
-# --------------------------------------------------------------------------- #
 def train_and_eval() -> None:
     _set_seed()
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(FIGURES_DIR, exist_ok=True)
 
     print("Loading data via tgn_model._prepare_data ...")
-    (events_by_sid, static_by_sid, label_by_sid_oldenc,
+    # The 6-class label_by_sid returned by _prepare_data is discarded here;
+    # survival targets are built below from labels_df.
+    (events_by_sid, static_by_sid, _,
      splits, n_concepts, n_edge_types, n_static, labels_df) = _prepare_data()
-    # We discard the old 6-class label_by_sid; we build survival targets below.
 
-    # Discretize follow-up using training-set durations only
     train_sids = splits["train"]
     train_durations = labels_df.loc[
         labels_df["subject_id"].isin(train_sids), "time_to_event_days"
@@ -243,15 +223,11 @@ def train_and_eval() -> None:
     time_edges = _make_time_bins(train_durations, NUM_TIME_BINS)
     print(f"  time bin edges (days): {time_edges.round(1).tolist()}")
 
-    # Build per-patient (duration_idx, event_idx)
+    # The PatientEventsDataset 'label' slot is repurposed to event_idx;
+    # duration_idx is read from a parallel lookup in the training loop.
     survival_targets = _prepare_survival_targets(labels_df, time_edges)
-    # PatientEventsDataset uses label_by_sid for the 'label' field; we put
-    # (event_idx, duration_idx) into separate dicts and reuse the dataset
-    # by mapping 'label' to a packed int (we'll unpack in the training loop).
-    # Simpler: monkey-patch the label_by_sid to be event_idx; we'll also
-    # build a parallel duration_idx_by_sid lookup.
-    label_by_sid = {sid: int(t[1]) for sid, t in survival_targets.items()}   # event_idx
-    duration_by_sid = {sid: int(t[0]) for sid, t in survival_targets.items()}# duration_idx
+    label_by_sid = {sid: int(t[1]) for sid, t in survival_targets.items()}
+    duration_by_sid = {sid: int(t[0]) for sid, t in survival_targets.items()}
 
     def _make_loader(sids, shuffle):
         ds = PatientEventsDataset(sids, events_by_sid, static_by_sid,
@@ -277,7 +253,7 @@ def train_and_eval() -> None:
     n_params = sum(p.numel() for p in model.parameters())
     print(f"  model params: {n_params:,}")
 
-    # Class weighting: events of rare causes get up-weighted; censored stays at 1
+    # Inverse-frequency weighting (training cohort only); censored stays at 1
     counts = np.zeros(NUM_CAUSES + 1)
     for sid in splits["train"]:
         counts[label_by_sid[sid]] += 1
@@ -331,11 +307,9 @@ def train_and_eval() -> None:
         scheduler.step()
         train_loss /= max(n_batches, 1)
 
-        cif_val, sids_val = _evaluate_survival(model, val_loader, device,
-                                                 time_edges, HORIZON_DAYS)
+        cif_val, sids_val = _evaluate_survival(model, val_loader, device)
         val_metrics = _per_cause_auroc_at_horizons(
             cif_val, sids_val, labels_df, time_edges, HORIZON_DAYS)
-        # Selection metric: mean AUROC across causes at 3-yr horizon
         mean3y = float(val_metrics[
             val_metrics["horizon_days"] == 1095
         ]["auroc"].mean(skipna=True))
@@ -358,10 +332,8 @@ def train_and_eval() -> None:
     if best_state is not None:
         model.load_state_dict(best_state)
 
-    # Final eval on val + test
     print("\nEvaluating on test set...")
-    cif_test, sids_test = _evaluate_survival(model, test_loader, device,
-                                               time_edges, HORIZON_DAYS)
+    cif_test, sids_test = _evaluate_survival(model, test_loader, device)
     test_metrics = _per_cause_auroc_at_horizons(
         cif_test, sids_test, labels_df, time_edges, HORIZON_DAYS)
     print("\n=== TGN-SURVIVAL TEST METRICS ===")
@@ -373,11 +345,9 @@ def train_and_eval() -> None:
     print("\nAUROC:\n" + pivot_auc.to_string())
     print("\nAUPRC:\n" + pivot_pr.to_string())
 
-    # Save artifacts
     test_metrics.to_csv(os.path.join(MODEL_DIR, "test_metrics.csv"), index=False)
     pd.DataFrame(history).to_csv(os.path.join(MODEL_DIR, "history.csv"), index=False)
 
-    # Save predictions: per-patient CIF at each horizon
     horizon_bins = [int(_discretize(np.array([h]), time_edges)[0])
                      for h in HORIZON_DAYS]
     preds_rows = []
@@ -397,7 +367,6 @@ def train_and_eval() -> None:
                  "best_epoch": best_epoch, "best_val_metric": best_metric},
                  os.path.join(MODEL_DIR, "best_model.pt"))
 
-    # Figure: per-cause AUROC by horizon
     fig, ax = plt.subplots(figsize=(10, 5))
     colors = {"MI": "#d62728", "Stroke": "#9467bd", "HF": "#ff7f0e",
               "AF": "#1f77b4", "PAD": "#2ca02c"}
@@ -407,7 +376,7 @@ def train_and_eval() -> None:
                 label=cause, color=colors[cause], linewidth=2)
     ax.set_xlabel("Horizon (days from index)")
     ax.set_ylabel("Time-dependent AUROC (test)")
-    ax.set_title("Figure 8 — TGN-Survival: per-cause AUROC by horizon",
+    ax.set_title("TGN-Survival: per-cause AUROC by horizon",
                  fontweight="bold")
     ax.legend(loc="best"); ax.grid(alpha=0.3)
     fig.tight_layout()
@@ -424,7 +393,7 @@ def train_and_eval() -> None:
 
 
 def _deephit_nll_per_sample(logits, duration_idx, event_idx):
-    """Same as deephit_nll but returns per-sample losses (no .mean())."""
+    """Per-sample DeepHit NLL (no reduction)."""
     B, C, T = logits.shape
     flat = logits.reshape(B, C * T)
     log_probs = F.log_softmax(flat, dim=-1).reshape(B, C, T)

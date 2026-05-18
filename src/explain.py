@@ -1,21 +1,16 @@
-"""Attention-rollout explainability for TGN-Survival.
+"""Attention-based explainability for TGN-Survival.
 
-For each test patient, captures the attention-pool weights over the patient's
-pre-index event sequence. These weights tell us *which past events the model
-relied on most* when computing the patient's risk for each circulatory
-endpoint. We aggregate them per true cause to produce:
+Captures the pool-query attention weights over each test patient's pre-index
+event sequence (the same weights the model uses to form its patient embedding),
+keeps the top-K most-attended events per patient, and aggregates per true cause
+to produce:
 
-    1. Top-N concepts per cause (concept_id -> mean attention)
-    2. Top-N concepts per cause by frequency in the top-K per patient
-    3. Fact-type breakdown per cause (diagnosis / drug / lab / vital / ...)
-    4. One illustrative per-patient attention plot per cause
-    5. A 5-panel concept-importance figure for the paper
-
-This addresses the JBHI special-issue topic:
-"Explainable and Trustworthy Biomedical AI Enabled by Knowledge Graph Reasoning".
+  1. top-N concepts per cause (mean and summed attention),
+  2. concept frequency in the top-K across true-positive patients,
+  3. fact-type breakdown per cause,
+  4. the 5-panel concept-importance figure.
 """
 import os
-from collections import defaultdict
 
 import numpy as np
 import pandas as pd
@@ -37,7 +32,6 @@ EXPLAIN_DIR = os.path.join(OUTPUT_DIR, "explain")
 TOP_K_EVENTS_PER_PATIENT = 10
 TOP_N_CONCEPTS_PER_CAUSE = 20
 
-# Color palette matched to fig8_tgn_survival_per_cause.png
 CAUSE_COLORS = {
     "MI":     "#d62728",
     "Stroke": "#9467bd",
@@ -47,12 +41,9 @@ CAUSE_COLORS = {
 }
 
 
-# --------------------------------------------------------------------------- #
-# Helpers                                                                     #
-# --------------------------------------------------------------------------- #
 def _load_concept_remap_lookup(labels_df: pd.DataFrame):
-    """Reconstruct emb_idx -> concept_id mapping (must match _prepare_data
-    exactly: train-only concepts indexed 1..N, with 0 = UNK)."""
+    """Reconstruct emb_idx -> concept_id, mirroring `_prepare_data`:
+    train-only concepts indexed 1..N, 0 = UNK."""
     events = pd.read_csv(
         os.path.join(OUTPUT_DIR, "modeling", "events.csv"),
         usecols=["subject_id", "concept_node_idx"], low_memory=False,
@@ -75,11 +66,8 @@ def _load_concept_remap_lookup(labels_df: pd.DataFrame):
     return emb_to_concept, emb_to_facttype
 
 
-# --------------------------------------------------------------------------- #
-# Inference w/ attention                                                      #
-# --------------------------------------------------------------------------- #
 def _extract_attention(model, loader, device):
-    """Returns a long-format DataFrame: one row per (patient, top-K event)."""
+    """Long-format DataFrame, one row per (patient, top-K event)."""
     model.eval()
     rows = []
     with torch.no_grad():
@@ -91,7 +79,7 @@ def _extract_attention(model, loader, device):
                              batch["t"], batch["v_norm"], batch["v_present"],
                              batch["static"], batch["mask"],
                              return_attention=True)
-            attn = attn.cpu().numpy()                       # (B, L)
+            attn = attn.cpu().numpy()
             concept_emb = batch["concept_idx"].cpu().numpy()
             edge_type = batch["edge_type_idx"].cpu().numpy()
             t_arr = batch["t"].cpu().numpy()
@@ -123,15 +111,11 @@ def _extract_attention(model, loader, device):
     return pd.DataFrame(rows)
 
 
-# --------------------------------------------------------------------------- #
-# Aggregation                                                                 #
-# --------------------------------------------------------------------------- #
 def _aggregate_per_cause(per_patient: pd.DataFrame,
                           labels_df: pd.DataFrame,
                           emb_to_concept: dict,
                           emb_to_facttype: dict) -> dict[str, pd.DataFrame]:
-    """For each cause, compute concept-level importance from patients with
-    that observed endpoint (true positives only)."""
+    """Per-cause concept-level importance, restricted to true-positive patients."""
     sid_to_label = dict(zip(labels_df["subject_id"], labels_df["endpoint_type"]))
     per_patient = per_patient.copy()
     per_patient["concept_id"] = per_patient["concept_emb_idx"].map(emb_to_concept)
@@ -144,7 +128,6 @@ def _aggregate_per_cause(per_patient: pd.DataFrame,
         if sub.empty:
             out[cause] = pd.DataFrame()
             continue
-        # Aggregate: per concept, mean attention + frequency in top-K
         agg = (sub.groupby(["concept_id", "fact_type"])
                .agg(mean_attention=("attention", "mean"),
                     sum_attention=("attention", "sum"),
@@ -170,14 +153,10 @@ def _fact_type_breakdown(per_patient: pd.DataFrame,
                  .sum().reset_index())
     pivot = breakdown.pivot(index="endpoint", columns="fact_type",
                              values="attention").fillna(0)
-    # Normalize to within-endpoint proportions
     pivot = pivot.div(pivot.sum(axis=1), axis=0)
     return pivot
 
 
-# --------------------------------------------------------------------------- #
-# Plots                                                                       #
-# --------------------------------------------------------------------------- #
 def _plot_concept_importance(per_cause: dict[str, pd.DataFrame],
                               out_path: str) -> None:
     fig, axes = plt.subplots(1, 5, figsize=(22, 8))
@@ -192,7 +171,7 @@ def _plot_concept_importance(per_cause: dict[str, pd.DataFrame],
                      fontweight="bold")
         ax.set_xlabel("Σ attention from pool query")
         ax.tick_params(axis="y", labelsize=8)
-    fig.suptitle("Figure 9 — Top-attention TKG concepts by observed endpoint",
+    fig.suptitle("Top-attention TKG concepts by observed endpoint",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -208,7 +187,7 @@ def _plot_fact_type_breakdown(pivot: pd.DataFrame, out_path: str) -> None:
                 colormap="tab10", width=0.7)
     ax.set_ylabel("share of total attention")
     ax.set_xlabel("observed endpoint")
-    ax.set_title("Figure 10 — Where the model attends, by fact type",
+    ax.set_title("Where the model attends, by fact type",
                  fontweight="bold")
     ax.legend(title="fact_type", bbox_to_anchor=(1.02, 1), loc="upper left",
               fontsize=9)
@@ -218,9 +197,6 @@ def _plot_fact_type_breakdown(pivot: pd.DataFrame, out_path: str) -> None:
     plt.close(fig)
 
 
-# --------------------------------------------------------------------------- #
-# Pipeline                                                                    #
-# --------------------------------------------------------------------------- #
 def run_explain() -> None:
     _set_seed()
     os.makedirs(EXPLAIN_DIR, exist_ok=True)
@@ -231,7 +207,6 @@ def run_explain() -> None:
      splits, n_concepts, n_edge_types, n_static,
      labels_df) = _prepare_data()
 
-    # Concept remap for interpretability
     emb_to_concept, emb_to_facttype = _load_concept_remap_lookup(labels_df)
 
     device = (torch.device("mps") if torch.backends.mps.is_available()
@@ -272,7 +247,6 @@ def run_explain() -> None:
              "n_patients", "pct_patients_with_concept_in_topK"]
         ].round(3).to_string(index=False))
 
-    # Persist
     per_patient.to_csv(os.path.join(EXPLAIN_DIR, "per_patient_top_events.csv"),
                        index=False)
     big = []
@@ -293,7 +267,6 @@ def run_explain() -> None:
     print("\nFact-type attention share by endpoint:")
     print(breakdown.round(3).to_string())
 
-    # Figures
     fig9 = os.path.join(FIGURES_DIR, "fig9_concept_importance_by_cause.png")
     fig10 = os.path.join(FIGURES_DIR, "fig10_attention_fact_type_breakdown.png")
     _plot_concept_importance(per_cause, fig9)
