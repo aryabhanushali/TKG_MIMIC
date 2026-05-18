@@ -135,3 +135,121 @@ EXPLAINABILITY
 
     --> figures/fig9,10,11
 
+
+# Results Summary
+
+We compared three different approaches for predicting future cardiometabolic complications:
+
+- Cox Proportional Hazards (traditional survival model)
+- XGBoost-Survival (tabular machine learning baseline)
+- TGN-Survival (our temporal graph transformer model)
+
+The model predicts:
+- Myocardial Infarction (MI)
+- Stroke
+- Heart Failure (HF)
+- Atrial Fibrillation (AF)
+- Peripheral Artery Disease (PAD)
+
+We evaluated performance using AUROC at 1-year, 3-year, and 5-year prediction horizons.
+
+---
+
+# Main Takeaways
+
+## 1. Temporal modeling helped most for Stroke and MI
+
+Our TGN-Survival model performed best on:
+- Stroke
+- Myocardial Infarction (MI)
+
+These diseases depend a lot on how a patient’s condition changes over time:
+- blood pressure trends
+- medication changes
+- worsening labs
+- sequences of clinical events
+
+Because the transformer reads patient history as a sequence of events instead of a single flattened row, it can better capture these patterns.
+
+---
+
+## 2. Cox regression performed worst overall
+
+The traditional Cox model consistently had the lowest AUROC scores, especially for:
+- Stroke
+- PAD
+
+This suggests that cardiometabolic disease progression is:
+- highly nonlinear
+- time-dependent
+- influenced by many interacting clinical factors
+
+which are difficult for simple linear survival models to capture.
+
+---
+
+## 3. XGBoost was still very strong for some diseases
+
+For:
+- Heart Failure (HF)
+- Atrial Fibrillation (AF)
+- PAD
+
+XGBoost-Survival performed similarly to or slightly better than the transformer model.
+
+These diseases may depend more on:
+- overall disease burden
+- extreme lab values
+- long-term physiologic state
+
+which can already be captured well using summary statistics like:
+- average lab values
+- maximum values
+- latest measurements
+- trends/slopes
+
+without needing full temporal reasoning.
+
+---
+
+# Example 3-Year AUROC Results
+
+| Endpoint | Cox | XGB-Survival | TGN-Survival |
+|---|---|---|---|
+| MI | 0.74 | 0.78 | 0.78 |
+| Stroke | 0.72 | 0.73 | 0.77 |
+| HF | 0.75 | 0.82 | 0.78 |
+| AF | 0.72 | 0.79 | 0.75 |
+| PAD | 0.62 | 0.80 | 0.77 |
+
+---
+
+# Explainability Results
+
+One useful part of the model is that we can inspect the attention weights to see which historical events the model focused on most when making predictions.
+
+The model learned clinically meaningful patterns:
+
+| Endpoint | Important Concepts |
+|---|---|
+| MI | coronary atherosclerosis, catheterization, beta blockers |
+| Stroke | high diastolic BP, hyperlipidemia, amlodipine |
+| HF | creatinine, BUN, hemoglobin |
+| AF | atrial fibrillation history, mitral valve disease |
+| PAD | vascular procedures, aspirin, clopidogrel |
+
+This suggests the model is learning medically reasonable relationships instead of random correlations.
+
+---
+
+# Overall Conclusion
+
+This project shows that representing EHR data as a temporal knowledge graph can improve prediction of cardiometabolic complications, especially for diseases where the ordering and timing of events matters.
+
+The temporal graph transformer:
+- clearly outperformed classical Cox survival models
+- matched or exceeded strong machine learning baselines on several tasks
+- performed especially well on Stroke and MI
+- produced interpretable clinical explanations through attention analysis
+
+Overall, the project demonstrates how temporal graph deep learning and multimodal clinical data can be combined for more accurate and interpretable healthcare prediction models.
