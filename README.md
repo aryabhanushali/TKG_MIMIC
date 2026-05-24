@@ -15,18 +15,7 @@ The pipeline integrates:
 The goal is to model how patient conditions evolve over time and use those temporal patterns to predict future cardiometabolic complications.
 
 ---
-
-# Project Motivation
-
-Most healthcare machine learning models flatten a patient into a single row of features:
-- average blood pressure
-- latest glucose
-- medication counts
-- diagnosis indicators
-
-This loses temporal structure.
-
-Instead, this project represents each patient history as a sequence of timestamped clinical events inside a Temporal Knowledge Graph (TKG), allowing the model to reason about:
+Project represents each patient history as a sequence of timestamped clinical events inside a Temporal Knowledge Graph (TKG), allowing the model to reason about:
 - event ordering
 - progression patterns
 - temporal relationships between diagnoses, labs, medications, and ICU events
@@ -149,11 +138,6 @@ Examples:
 - ICU vital sign
 - lab result with numerical value
 
-This preserves:
-- timing
-- progression
-- event ordering
-- longitudinal disease evolution
 
 Final graph:
 - ~13.4 million temporal facts
@@ -163,7 +147,7 @@ Final graph:
 
 # Multimodal Notes Pipeline
 
-The project also incorporates discharge summary notes using:
+Incorporates discharge summary notes using:
 - Bio_ClinicalBERT
 
 Pipeline:
@@ -340,7 +324,6 @@ src/
 
 ---
 
-# Tech Stack
 
 - Python
 - PyTorch
@@ -366,5 +349,3 @@ The temporal graph transformer:
 - matched or exceeded strong machine learning baselines on several endpoints
 - performed especially well on Stroke and MI
 - generated interpretable explanations through attention analysis
-
-Overall, the project shows how temporal knowledge graphs and multimodal survival modeling can be used to build more accurate and clinically interpretable healthcare AI systems.
