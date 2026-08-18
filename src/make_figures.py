@@ -97,15 +97,18 @@ def _binary_labels_for_cause_at_horizon(labels: pd.DataFrame, cause: str,
                                          horizon_days: int):
     """Test-set binary labels and inclusion mask for a (cause, horizon) pair.
 
-    y=1 if cause observed AND duration<=h; the mask drops patients censored
-    before h (IPCW-free, matching the AUROC evaluation in tgn_survival.py).
+    Corrected competing-risks rule (matches tgn_survival / evaluate_stats):
+    positive = cause observed AND duration<=h; negative = survived past h OR a
+    competing observed event before h; only patients censored before h are
+    dropped (IPCW-free).
     """
     labels_test = labels[labels["split"] == "test"].sort_values("subject_id").reset_index(drop=True)
     d = labels_test["time_to_event_days"].to_numpy(dtype=float)
     e = labels_test["endpoint_type"].to_numpy()
     pos = (e == cause) & (d <= horizon_days)
-    neg = (d >= horizon_days)
-    mask = pos | neg
+    survived = d >= horizon_days
+    competing = (d < horizon_days) & (e != cause) & (e != "censored")
+    mask = pos | survived | competing
     return labels_test, pos.astype(int), mask
 
 
@@ -209,43 +212,35 @@ def fig12_calibration_5y(labels, base_preds, tgn_preds, out_path: str) -> None:
         labels_test, y_full, mask = _binary_labels_for_cause_at_horizon(labels, cause, h)
         if y_full.sum() < 10:
             ax.set_title(f"{cause} (too few positives)"); continue
-        for model_name, source_df, col in [
-            ("Cox",      base_preds, f"cox_risk_{cause}"),
-            ("XGB-Surv", base_preds, f"xgb_surv_risk_{cause}"),
-            ("TGN-Surv", tgn_preds,  f"cif_{cause}_at_{h}d"),
-        ]:
-            if source_df is None or col not in source_df.columns:
-                continue
-            preds = (source_df.set_index("subject_id")
-                       .reindex(labels_test["subject_id"])[col].to_numpy())
-            scores = preds[mask]
-            ys = y_full[mask]
-            if scores.size < 10 or not np.isfinite(scores).all():
-                continue
-            # Rescale Cox/XGB raw partial hazards into [0,1]; CIF is already in [0,1].
-            if model_name in ("Cox", "XGB-Surv"):
-                s_min, s_max = scores.min(), scores.max()
-                scores = (scores - s_min) / max(s_max - s_min, 1e-9)
-            try:
-                frac_pos, mean_pred = calibration_curve(ys, scores, n_bins=10,
-                                                         strategy="quantile")
-            except ValueError:
-                continue
-            colormap = {"Cox": MODEL_COLORS["cox"],
-                        "XGB-Surv": MODEL_COLORS["xgb_surv"],
-                        "TGN-Surv": MODEL_COLORS["tgn_surv"]}
-            lw = 2.5 if model_name == "TGN-Surv" else 1.5
-            ax.plot(mean_pred, frac_pos, "o-", label=model_name,
-                    color=colormap[model_name], linewidth=lw, markersize=6)
+        # Only the TGN-Survival CIF is a genuine probability and can be assessed
+        # for calibration. Cox/XGBoost emit relative-risk scores, NOT
+        # probabilities; min-max-rescaling them into [0,1] would produce a
+        # meaningless reliability curve, so they are intentionally excluded.
+        if tgn_preds is None or f"cif_{cause}_at_{h}d" not in tgn_preds.columns:
+            ax.set_title(f"{cause} (no CIF)"); continue
+        preds = (tgn_preds.set_index("subject_id")
+                   .reindex(labels_test["subject_id"])[f"cif_{cause}_at_{h}d"].to_numpy())
+        scores = preds[mask]
+        ys = y_full[mask]
+        if scores.size < 10 or not np.isfinite(scores).all():
+            ax.set_title(f"{cause} (insufficient)"); continue
+        try:
+            frac_pos, mean_pred = calibration_curve(ys, scores, n_bins=5,
+                                                     strategy="quantile")
+        except ValueError:
+            continue
+        ax.plot(mean_pred, frac_pos, "o-", label="TGN-Surv CIF",
+                color=MODEL_COLORS["tgn_surv"], linewidth=2.5, markersize=6)
         ax.plot([0, 1], [0, 1], "k--", linewidth=0.6, alpha=0.5,
                 label="perfect calibration")
         ax.set_title(f"{cause}", fontweight="bold")
-        ax.set_xlabel("mean predicted risk (rescaled)")
+        ax.set_xlabel("mean predicted CIF")
         ax.set_ylabel("observed event fraction")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8, loc="upper left")
     axes[-1].axis("off")
-    fig.suptitle("Calibration at 5-year horizon (reliability diagrams)",
+    fig.suptitle("TGN-Survival CIF calibration at 5-year horizon "
+                 "(corrected competing-risks labels)",
                  fontsize=14, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=300, bbox_inches="tight")

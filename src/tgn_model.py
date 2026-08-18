@@ -13,7 +13,7 @@ from sklearn.metrics import (
     roc_curve, f1_score, accuracy_score, log_loss,
 )
 
-from src.config import OUTPUT_DIR, FIGURES_DIR, SEED
+from src.config import OUTPUT_DIR, FIGURES_DIR, SEED, read_events_table
 
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
 MODEL_DIR = os.path.join(OUTPUT_DIR, "tgn")
@@ -216,7 +216,7 @@ def _prepare_data():
     print("Loading modeling artifacts...")
     labels = pd.read_csv(os.path.join(MODELING_DIR, "labels.csv"))
     static = pd.read_csv(os.path.join(MODELING_DIR, "static_features.csv"))
-    events = pd.read_csv(os.path.join(MODELING_DIR, "events.csv"))
+    events = read_events_table()
     edge_types = pd.read_csv(os.path.join(MODELING_DIR, "edge_types.csv"))
 
     # Train-observed concepts only; OOV (test-only) routed to UNK at idx 0
@@ -280,11 +280,19 @@ def _prepare_data():
         static_norm.to_numpy(dtype=np.float32),
     ))
 
-    # Append per-patient discharge-note BioBERT embedding to static block
+    # Append per-patient discharge-note BioBERT embedding to static block.
+    # Controlled EXPLICITLY by env var TKG_USE_NOTES (not silently inferred from
+    # file presence), so the strict (structured-only) and multimodal variants
+    # are reproducible and unambiguous:
+    #   TKG_USE_NOTES=0  -> strict, structured-only (no note block at all)
+    #   TKG_USE_NOTES=1  -> multimodal (default; requires the note artifacts)
+    use_notes = os.environ.get("TKG_USE_NOTES", "1").lower() not in ("0", "false", "no")
     notes_emb_path = os.path.join(OUTPUT_DIR, "notes", "patient_note_emb.npy")
     notes_csv_path = os.path.join(OUTPUT_DIR, "notes", "patient_note_emb.csv")
     n_static_total = len(static_cols)
-    if os.path.exists(notes_emb_path) and os.path.exists(notes_csv_path):
+    if not use_notes:
+        print(f"  TKG_USE_NOTES=0 -> strict structured-only; n_static = {n_static_total}")
+    elif os.path.exists(notes_emb_path) and os.path.exists(notes_csv_path):
         notes_emb = np.load(notes_emb_path).astype(np.float32)
         notes_meta = pd.read_csv(notes_csv_path)
         sid_to_note_row = {int(sid): i for i, sid

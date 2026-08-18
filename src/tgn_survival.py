@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_auc_score, average_precision_score
 
-from src.config import OUTPUT_DIR, FIGURES_DIR
+from src.config import OUTPUT_DIR, FIGURES_DIR, SEED
 from src.tgn_model import (
     TKGTransformer,
     PatientEventsDataset, collate,
@@ -28,8 +28,24 @@ from src.tgn_model import (
     _set_seed, _prepare_data,
 )
 
-MODEL_DIR = os.path.join(OUTPUT_DIR, "tgn_survival")
+# Seed 42 (the default/canonical run) writes to tgn_survival/, which is what
+# compare_survival.py, evaluate_stats.py, explain*.py, and make_figures.py all
+# read as THE reported model. Other seeds (via TKG_SEED env var), used only
+# for multi-seed mean+/-std robustness reporting, write to their own
+# tgn_survival_seed{N}/ so they never overwrite the canonical run.
+MODEL_DIR = os.path.join(OUTPUT_DIR, "tgn_survival" if SEED == 42 else f"tgn_survival_seed{SEED}")
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
+
+# All 5 seeds (42-46) early-stopped with "best epoch" = 1 or 2 by val mean
+# AUROC@3y. A GNNExplainer fidelity check on that checkpoint (explain_gnn.py)
+# found its "important" events statistically indistinguishable from randomly
+# chosen ones (sufficiency/comprehensiveness KL ~= random-baseline KL) -- i.e.
+# the checkpoint being selected is too undertrained for its internal
+# event-importance signal to be meaningful, even though its aggregate
+# discrimination is already competitive. MIN_EPOCHS makes epochs before this
+# floor ineligible for "best" checkpoint selection, so early-stopping cannot
+# lock in a checkpoint before the model has had a real minimum of training.
+MIN_EPOCHS = 15
 
 # Competing-risks setup: 5 cause-specific endpoints + censored
 CAUSES = ["MI", "Stroke", "HF", "AF", "PAD"]
@@ -170,9 +186,10 @@ def _per_cause_auroc_at_horizons(cif: np.ndarray, sids: np.ndarray,
                                   horizons: list[int]) -> pd.DataFrame:
     """Per-cause AUROC at each horizon h.
 
-    For cause c at horizon h: label = (observed cause == c AND duration <= h);
-    score = CIF_c at the bin containing h. Patients censored before h are
-    excluded (IPCW-free).
+    For cause c at horizon h: positive = (observed cause == c AND duration <= h);
+    negative = survived past h, OR had a *competing* observed event before h
+    (a competing event means cause c did not occur by h). Only patients
+    administratively censored before h are dropped (status unknown; IPCW-free).
     """
     durs = dict(zip(labels_df["subject_id"], labels_df["time_to_event_days"]))
     evts = dict(zip(labels_df["subject_id"], labels_df["endpoint_type"]))
@@ -189,6 +206,8 @@ def _per_cause_auroc_at_horizons(cif: np.ndarray, sids: np.ndarray,
                 if e == cause and d <= h_days:
                     y.append(1); p.append(cif[i, c_idx, h_bin])
                 elif d >= h_days:
+                    y.append(0); p.append(cif[i, c_idx, h_bin])
+                elif e != cause and e != "censored":   # competing event before h
                     y.append(0); p.append(cif[i, c_idx, h_bin])
             y, p = np.array(y), np.array(p)
             if y.sum() == 0 or y.sum() == len(y):
@@ -278,7 +297,8 @@ def train_and_eval() -> None:
     history = []
     best_state = None
 
-    print(f"\nTraining for up to {EPOCHS} epochs (early stop patience={PATIENCE})...")
+    print(f"\nTraining for up to {EPOCHS} epochs (early stop patience={PATIENCE}, "
+          f"min_epochs={MIN_EPOCHS} before a checkpoint is eligible as 'best')...")
     print("Selection metric: mean per-cause AUROC at 3-yr horizon on val set\n")
     for epoch in range(1, EPOCHS + 1):
         t0 = time.time()
@@ -318,6 +338,8 @@ def train_and_eval() -> None:
               f"val_mean_AUROC@3y={mean3y:.4f}  ({dt:.1f}s)")
         history.append({"epoch": epoch, "train_loss": train_loss,
                          "val_mean_auroc_3y": mean3y, "time_s": dt})
+        if epoch < MIN_EPOCHS:
+            continue   # too early to be eligible as "best"; keep training
         if mean3y > best_metric:
             best_metric = mean3y; best_epoch = epoch; no_improve = 0
             best_state = {k: v.detach().cpu().clone()
@@ -380,16 +402,18 @@ def train_and_eval() -> None:
                  fontweight="bold")
     ax.legend(loc="best"); ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(os.path.join(FIGURES_DIR, "fig8_tgn_survival_per_cause.png"),
-                dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
     print(f"\nSaved:")
     print(f"  {os.path.join(MODEL_DIR, 'test_metrics.csv')}")
     print(f"  {os.path.join(MODEL_DIR, 'predictions_test.csv')}")
     print(f"  {os.path.join(MODEL_DIR, 'history.csv')}")
     print(f"  {os.path.join(MODEL_DIR, 'best_model.pt')}")
-    print(f"  {os.path.join(FIGURES_DIR, 'fig8_tgn_survival_per_cause.png')}")
+    # This paper figure reports THE canonical (seed=42) model; other seeds are
+    # numeric-only robustness runs and must not overwrite it.
+    if SEED == 42:
+        fig.savefig(os.path.join(FIGURES_DIR, "fig8_tgn_survival_per_cause.png"),
+                    dpi=300, bbox_inches="tight")
+        print(f"  {os.path.join(FIGURES_DIR, 'fig8_tgn_survival_per_cause.png')}")
+    plt.close(fig)
 
 
 def _deephit_nll_per_sample(logits, duration_idx, event_idx):
