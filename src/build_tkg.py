@@ -1,6 +1,7 @@
 """Build the temporal knowledge graph fact table from MIMIC-IV."""
 import os
 import gc
+import re
 import numpy as np
 import pandas as pd
 
@@ -25,7 +26,7 @@ def _load_cohort_windows() -> tuple[pd.DataFrame, pd.DataFrame]:
         os.path.join(OUTPUT_DIR, "cohort.csv"),
         parse_dates=["index_date", "endpoint_date"],
     )
-    # window_start = index_date - 365 days
+    # window_start = index_date - PRE_INDEX_WINDOW_DAYS (1825 days / 5 years)
     cohort["window_start"] = cohort["index_date"] - pd.Timedelta(days=PRE_INDEX_WINDOW_DAYS)
     # window_end: endpoint_date if endpoint, else index_date + follow_up_days
     cohort["window_end"] = cohort["endpoint_date"]
@@ -161,16 +162,26 @@ def _prescription_facts(windows: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _label_matches(s: str, substrings) -> bool:
+    """Whole-token (word-boundary) match of any substring in label `s`.
+
+    Word boundaries prevent spurious bare-substring hits (e.g. 'alt' inside
+    'cobalt'/'salt', 'ast' inside 'gastric', 'ldl' inside an unrelated token);
+    multi-word phrases like 'cholesterol, total' still match exactly.
+    """
+    return any(re.search(r"\b" + re.escape(sub) + r"\b", s) for sub in substrings)
+
+
 def _resolve_itemids_by_label(d_items: pd.DataFrame,
                                label_dict: dict) -> dict[int, str]:
-    """Map d_items.itemid to a concept name by substring-matching the label
-    column. First match wins (dict iteration order matters)."""
+    """Map d_items.itemid to a concept name by word-boundary label matching.
+    First match wins (dict iteration order matters)."""
     d_items = d_items.copy()
     d_items["label_l"] = d_items["label"].astype(str).str.lower()
     itemid_to_concept: dict[int, str] = {}
     for concept, substrings in label_dict.items():
         matched = d_items[d_items["label_l"].apply(
-            lambda s: any(sub in s for sub in substrings))]
+            lambda s: _label_matches(s, substrings))]
         for iid in matched["itemid"]:
             if iid not in itemid_to_concept:
                 itemid_to_concept[iid] = concept
@@ -185,7 +196,7 @@ def _resolve_lab_itemids() -> dict[int, str]:
     matched_per_concept: dict[str, int] = {}
     for concept, substrings in CARDIOMETA_LAB_LABELS.items():
         matched = labitems[labitems["label_l"].apply(
-            lambda s: any(sub in s for sub in substrings))]
+            lambda s: _label_matches(s, substrings))]
         new = 0
         for itemid in matched["itemid"]:
             if itemid not in itemid_to_concept:
@@ -302,7 +313,11 @@ def _omr_facts(windows: pd.DataFrame) -> pd.DataFrame:
     bp["sys"] = pd.to_numeric(parts[0], errors="coerce")
     bp["dia"] = pd.to_numeric(parts[1], errors="coerce")
     bp = bp.dropna(subset=["sys"])
-    bp["concept_id"] = np.where(bp["sys"] > 140, "OMR_BP_HIGH", "OMR_BP_NORMAL")
+    # Hypertensive reading: systolic >= 140 OR diastolic >= 90 (JNC7 threshold).
+    # Previously only systolic was used, so isolated diastolic hypertension
+    # (e.g. 130/95) was mislabeled NORMAL.
+    bp_high = (bp["sys"] >= 140) | (bp["dia"] >= 90)
+    bp["concept_id"] = np.where(bp_high, "OMR_BP_HIGH", "OMR_BP_NORMAL")
     bp["relation"] = "hasBP"
     bp["fact_type"] = "omr_bp"
     bp["source"] = "omr"
