@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import roc_auc_score, roc_curve, f1_score, accuracy_score
 from torch_geometric.nn import RGCNConv
 
-from src.config import OUTPUT_DIR, FIGURES_DIR
+from src.config import OUTPUT_DIR, FIGURES_DIR, read_events_table
 from src.tgn_model import (
     TimeEncoder, PatientEventsDataset, collate,
     ENDPOINT_ORDER, EP_TO_IDX,
@@ -135,7 +135,7 @@ def _prepare_hetero_data():
     print("Loading modeling artifacts (v2 with ontology)...")
     labels = pd.read_csv(os.path.join(MODELING_DIR, "labels.csv"))
     static = pd.read_csv(os.path.join(MODELING_DIR, "static_features.csv"))
-    events = pd.read_csv(os.path.join(MODELING_DIR, "events.csv"))
+    events = read_events_table()
     edge_types = pd.read_csv(os.path.join(MODELING_DIR, "edge_types.csv"))
     nodes_v2 = pd.read_csv(os.path.join(OUTPUT_DIR, "node_index_v2.csv"))
     ontology = pd.read_csv(os.path.join(OUTPUT_DIR, "ontology_edges.csv"))

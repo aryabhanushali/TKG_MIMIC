@@ -17,13 +17,18 @@ from sksurv.linear_model import CoxnetSurvivalAnalysis
 from sksurv.util import Surv
 import xgboost as xgb
 
-from src.config import OUTPUT_DIR, SEED
+from src.config import OUTPUT_DIR, SEED, read_events_table
 from src.baseline import (
     _build_bag_of_codes, _build_value_summary_features,
 )
 
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
-SURV_DIR = os.path.join(OUTPUT_DIR, "baselines_survival")
+# Seed 42 (canonical) writes to baselines_survival/, read by compare_survival.py
+# and evaluate_stats.py as THE reported baseline. Other seeds -- used only for
+# multi-seed mean+/-std on XGBoost (CoxNet has no meaningful random_state, so
+# it's identical across seeds by construction) -- write to their own dir so
+# they never overwrite the canonical run.
+SURV_DIR = os.path.join(OUTPUT_DIR, "baselines_survival" if SEED == 42 else f"baselines_survival_seed{SEED}")
 CAUSES = ["MI", "Stroke", "HF", "AF", "PAD"]
 HORIZON_DAYS = [365, 1095, 1825]   # match tgn_survival
 
@@ -32,7 +37,7 @@ def _load():
     print("Loading modeling artifacts...")
     labels = pd.read_csv(os.path.join(MODELING_DIR, "labels.csv"))
     static = pd.read_csv(os.path.join(MODELING_DIR, "static_features.csv"))
-    events = pd.read_csv(os.path.join(MODELING_DIR, "events.csv"))
+    events = read_events_table()
     nodes  = pd.read_csv(os.path.join(MODELING_DIR, "node_metadata.csv"))
     return labels, static, events, nodes
 
@@ -79,13 +84,18 @@ def _make_y(labels: pd.DataFrame, cause: str):
 
 
 def _eval_horizon_auroc(risk_score, labels, cause, horizons):
-    """Per-horizon AUROC: y=1 iff cause observed and duration<=h; score=risk."""
+    """Per-horizon AUROC under the corrected competing-risks rule:
+    positive = cause observed and duration<=h; negative = survived past h OR a
+    competing observed event before h; only patients censored before h are
+    dropped (IPCW-free). score=risk."""
     durs = labels["time_to_event_days"].to_numpy(dtype=float)
     evts = labels["endpoint_type"].to_numpy()
     rows = []
     for h in horizons:
         keep_pos = (evts == cause) & (durs <= h)
-        keep_neg = (durs >= h)
+        survived = durs >= h
+        competing = (durs < h) & (evts != cause) & (evts != "censored")
+        keep_neg = survived | competing
         mask = keep_pos | keep_neg
         y = keep_pos[mask].astype(int)
         s = risk_score[mask]

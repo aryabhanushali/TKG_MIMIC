@@ -7,6 +7,7 @@ from src.config import (
     DATA_DIR, OUTPUT_DIR,
     CARDIOMETA_ICD10, CARDIOMETA_ICD9,
     ENDPOINTS_ICD10, ENDPOINTS_ICD9,
+    ENDPOINT_HISTORY_ICD10, ENDPOINT_HISTORY_ICD9,
     CCI_WEIGHTS,
     MIN_FOLLOWUP_DAYS,
 )
@@ -19,9 +20,17 @@ def _icd_matches_any(code_series: pd.Series, prefixes) -> pd.Series:
     return code_series.str.startswith(tuple(prefixes), na=False)
 
 
-def _classify_dx(dx: pd.DataFrame, mapping_icd10, mapping_icd9) -> pd.DataFrame:
-    """Add a 'category' column to dx rows that match any cardiometa/endpoint cat."""
+def _classify_dx(dx: pd.DataFrame, mapping_icd10, mapping_icd9,
+                 primary_only: bool = False) -> pd.DataFrame:
+    """Add a 'category' column to dx rows that match any cardiometa/endpoint cat.
+
+    primary_only: restrict to the principal diagnosis (seq_num == 1) so an
+    incident endpoint is the *reason for admission*, not a secondary/chronic
+    comorbidity code that would misclassify prevalent disease as a new event.
+    """
     dx = dx.copy()
+    if primary_only:
+        dx = dx[dx["seq_num"] == 1]
     dx["category"] = None
     for cat, prefixes in mapping_icd10.items():
         mask = (dx["icd_version"] == 10) & _icd_matches_any(dx["icd_code"], prefixes)
@@ -91,11 +100,14 @@ def build_cohort() -> pd.DataFrame:
         patients[["subject_id", "anchor_age", "anchor_year"]], on="subject_id", how="left"
     )
     adm["age_at_admission"] = adm["anchor_age"] + (adm["admittime"].dt.year - adm["anchor_year"])
-    # Exclude patients who were < 18 at *any* admission considered for index
+    # Drop individual admission ROWS taken at age < 18 (a patient with any
+    # adult admission survives this step via their other rows; full removal
+    # of never-adult patients doesn't happen until the age >= 18 AT INDEX
+    # check below, since only an adult admission can become the index date).
     adult_mask = adm["age_at_admission"] >= 18
     adm = adm[adult_mask]
     n_after_adult = adm["subject_id"].nunique()
-    print(f"  patients with all-adult admissions considered: {n_after_adult:,}")
+    print(f"  patients with >=1 admission at age >= 18: {n_after_adult:,}")
 
     print("\nIdentifying cardiometabolic index admissions...")
     cm_dx = _classify_dx(dx, CARDIOMETA_ICD10, CARDIOMETA_ICD9)
@@ -121,12 +133,14 @@ def build_cohort() -> pd.DataFrame:
     n_with_cm = len(index_admit)
     print(f"  patients with any cardiometabolic dx: {n_with_cm:,}")
 
-    print("\nIdentifying endpoint admissions (post-index)...")
-    ep_dx = _classify_dx(dx, ENDPOINTS_ICD10, ENDPOINTS_ICD9)
+    print("\nIdentifying endpoint admissions (post-index, principal diagnosis)...")
+    # Incident endpoint = endpoint code in the PRINCIPAL position (seq_num==1)
+    # of a post-index admission (i.e., the reason for that admission), not a
+    # secondary/chronic comorbidity code.
+    ep_dx = _classify_dx(dx, ENDPOINTS_ICD10, ENDPOINTS_ICD9, primary_only=True)
     ep_with_time = ep_dx.merge(
         adm[["subject_id", "hadm_id", "admittime"]], on=["subject_id", "hadm_id"], how="inner"
     )
-    # Drop endpoints occurring BEFORE the index admission. Same-day excluded too.
     ep_with_idx = ep_with_time.merge(
         index_admit[["subject_id", "admittime"]].rename(columns={"admittime": "index_date"}),
         on="subject_id", how="inner",
@@ -141,9 +155,38 @@ def build_cohort() -> pd.DataFrame:
         "category": "endpoint_type",
     })[["subject_id", "endpoint_date", "endpoint_hadm_id", "endpoint_type"]]
 
-    # Also flag: any endpoint that happened BEFORE/ON index date -> exclude patient
-    ep_before = ep_with_idx[ep_with_idx["admittime"] <= ep_with_idx["index_date"]]
-    pts_endpoint_before = set(ep_before["subject_id"].unique())
+    # Prevalent-disease washout: exclude any patient with a chronic/history form
+    # of ANY endpoint disease (matched in ANY diagnosis position) on an admission
+    # at/before the index date. This removes prevalent cases (e.g. chronic AF
+    # coded I48.91, old MI 412, prior PAD 440.2x) that the principal-position
+    # incident definition would otherwise leave in the at-risk set.
+    hist_dx = _classify_dx(dx, ENDPOINT_HISTORY_ICD10, ENDPOINT_HISTORY_ICD9)
+    hist_with_idx = hist_dx.merge(
+        adm[["subject_id", "hadm_id", "admittime"]], on=["subject_id", "hadm_id"], how="inner"
+    ).merge(
+        index_admit[["subject_id", "admittime"]].rename(columns={"admittime": "index_date"}),
+        on="subject_id", how="inner",
+    )
+    washout_hits = hist_with_idx.loc[
+        hist_with_idx["admittime"] <= hist_with_idx["index_date"]
+    ]
+    pts_endpoint_before = set(washout_hits["subject_id"].unique())
+
+    # Visibility: per-cause washout counts. HF history codes (I110/I130/I132,
+    # ICD-9 402.0x/402.1x/402.9x = hypertensive heart disease) overlap with
+    # the HTN cardiometabolic-index definition, so index patients whose HTN is
+    # coded as hypertensive heart disease can be washed out here as
+    # "prevalent HF" even though HF was never their endpoint. This is the
+    # intended effect of an all-cause washout (they do have prevalent
+    # cardiac disease) but the size of it should be visible, not silent.
+    print("  prevalent-disease washout, patients excluded per cause "
+          "(a patient can hit >1 cause):")
+    for cause in ENDPOINT_HISTORY_ICD10:
+        n_cause = washout_hits.loc[
+            washout_hits["category"] == cause, "subject_id"
+        ].nunique()
+        print(f"    {cause:8s}: {n_cause:,}")
+    print(f"  total unique patients washed out: {len(pts_endpoint_before):,}")
 
     # Build cohort skeleton
     cohort = index_admit[[
@@ -224,17 +267,28 @@ def build_cohort() -> pd.DataFrame:
     out_path = os.path.join(OUTPUT_DIR, "cohort.csv")
     cohort.to_csv(out_path, index=False)
 
+    # Persist the real exclusion cascade so the CONSORT figure reads actual
+    # counts instead of hardcoded constants.
+    cascade = pd.DataFrame(
+        [
+            ("All MIMIC-IV patients", n_total_patients),
+            ("Patients with >=1 admission at age >= 18", n_after_adult),
+            ("Has cardiometabolic index dx (among adult admissions)", n_with_cm),
+            ("No prevalent endpoint disease at/before index (washout)", n_after_no_prior_ep),
+            (">= 2 admissions (any age)", n_after_min_admits),
+            ("Adult (>=18) at the index admission itself", n_after_adult2),
+            (f"Endpoint OR >= {MIN_FOLLOWUP_DAYS}d follow-up", n_after_fu),
+        ],
+        columns=["step", "n_patients"],
+    )
+    cascade.to_csv(os.path.join(OUTPUT_DIR, "cohort_cascade.csv"), index=False)
+
     # Report
     print("\n=== COHORT SUMMARY ===")
     print(f"Total patients: {len(cohort):,}")
     print("\nExclusion cascade:")
-    print(f"  All MIMIC-IV patients:                {n_total_patients:,}")
-    print(f"  After adult-age filter:               {n_after_adult:,}")
-    print(f"  With cardiometabolic dx (index set):  {n_with_cm:,}")
-    print(f"  After 'no endpoint before index':     {n_after_no_prior_ep:,}")
-    print(f"  After >= 2 admissions:                {n_after_min_admits:,}")
-    print(f"  After age >= 18 at index:             {n_after_adult2:,}")
-    print(f"  After follow-up rule (endpoint OR >= {MIN_FOLLOWUP_DAYS}d): {n_after_fu:,}")
+    for step, n in zip(cascade["step"], cascade["n_patients"]):
+        print(f"  {step:<58s}{n:>10,d}")
 
     print("\nEndpoint distribution:")
     ep_counts = cohort["endpoint_type"].value_counts()

@@ -27,7 +27,7 @@ from sklearn.metrics import (
 import matplotlib.pyplot as plt
 import xgboost as xgb
 
-from src.config import OUTPUT_DIR, FIGURES_DIR, SEED
+from src.config import OUTPUT_DIR, FIGURES_DIR, SEED, read_events_table
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -41,7 +41,7 @@ def _load_data():
     print("Loading modeling artifacts...")
     labels = pd.read_csv(os.path.join(MODELING_DIR, "labels.csv"))
     static = pd.read_csv(os.path.join(MODELING_DIR, "static_features.csv"))
-    events = pd.read_csv(os.path.join(MODELING_DIR, "events.csv"))
+    events = read_events_table()
     nodes = pd.read_csv(os.path.join(MODELING_DIR, "node_metadata.csv"))
     print(f"  labels={len(labels):,}, static={len(static):,}, "
           f"events={len(events):,}, nodes={len(nodes):,}")

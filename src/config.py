@@ -1,10 +1,31 @@
 """Config: all hardcoded values for the TKG pipeline."""
 import os
+import pandas as pd
 
 DATA_DIR = os.path.expanduser("~/Desktop/TKG_MIMIC/mimic_data/")
 OUTPUT_DIR = os.path.expanduser("~/Desktop/TKG_MIMIC/tkg_output/")
 FIGURES_DIR = os.path.join(OUTPUT_DIR, "figures")
-SEED = 42
+MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
+
+
+def read_events_table(usecols=None) -> pd.DataFrame:
+    """prep_modeling.py writes events.parquet, falling back to events.csv only
+    if pyarrow/fastparquet is unavailable at write time -- every consumer must
+    read whichever exists so this doesn't silently break (or, for a plain
+    read_csv, hard-crash with FileNotFoundError) whenever the write-time
+    environment happens to have parquet support installed."""
+    parquet_path = os.path.join(MODELING_DIR, "events.parquet")
+    csv_path = os.path.join(MODELING_DIR, "events.csv")
+    if os.path.exists(parquet_path):
+        df = pd.read_parquet(parquet_path)
+        return df[usecols] if usecols else df
+    return pd.read_csv(csv_path, usecols=usecols, low_memory=False)
+# TKG_SEED overrides the model-training seed only (weight init, dropout,
+# batch order via _set_seed()); it does NOT affect the train/val/test split,
+# which prep_modeling.py fixes once from this same constant and saves to
+# labels.csv -- multi-seed TGN runs read that fixed split and vary only the
+# model's own stochasticity, which is the correct multi-seed protocol.
+SEED = int(os.environ.get("TKG_SEED", "42"))
 
 # Cardiometabolic index conditions (ICD-10)
 CARDIOMETA_ICD10 = {
@@ -30,32 +51,89 @@ CARDIOMETA_ICD9 = {
     "MetSyn":     ["2777"],
 }
 
-# Circulatory endpoints (ICD-10)
+# Circulatory endpoints (ICD-10) -- incident acute events.
+# NOTE (clinical review): these define the *incident* endpoint and are matched
+# only in the PRINCIPAL diagnosis position of a post-index admission (see
+# cohort.py). Verify against your target guideline before submission.
 ENDPOINTS_ICD10 = {
-    "MI":     ["I21", "I210", "I211", "I212", "I213", "I214",
-               "I219", "I21A", "I21B"],
-    "Stroke": ["I630", "I631", "I632", "I633", "I634", "I635",
-               "I636", "I638", "I639"],
-    "HF":     ["I500", "I501", "I502", "I503", "I504", "I508",
-               "I509", "I5020", "I5021", "I5022", "I5023",
-               "I5030", "I5031", "I5032", "I5033",
-               "I5040", "I5041", "I5042", "I5043"],
-    "AF":     ["I480", "I481", "I482", "I483", "I484",
-               "I4811", "I4819", "I4820", "I4821"],
-    "PAD":    ["I730", "I731", "I738", "I739"],
+    # I21 = acute MI (STEMI/NSTEMI/type-2), I22 = subsequent acute MI.
+    "MI":     ["I21", "I22"],
+    # Ischemic stroke only (I63.x). Hemorrhagic (I60-I62) excluded by design.
+    "Stroke": ["I63"],
+    "HF":     ["I50"],
+    # I48.x atrial fibrillation/flutter, incl. I48.91 "unspecified AF" (was
+    # previously omitted, which both under-ascertained AF and leaked I48.91 in
+    # as a pre-index "predictor").
+    "AF":     ["I48"],
+    # I73.x peripheral vascular disease + I70.2x lower-extremity atherosclerosis
+    # (the common PAD code).
+    "PAD":    ["I730", "I731", "I738", "I739", "I702"],
 }
 
-# Circulatory endpoints (ICD-9)
+# Circulatory endpoints (ICD-9) -- incident acute events.
 ENDPOINTS_ICD9 = {
-    "MI":     ["4100", "4101", "4102", "4103", "4104", "4105",
-               "4106", "4107", "4108", "4109"],
-    "Stroke": ["4330", "4331", "4332", "4333", "4334", "4335",
-               "4340", "4341", "4342", "4349"],
-    "HF":     ["4280", "4281", "4282", "4283", "4284", "4289"],
-    "AF":     ["42731"],
-    "PAD":    ["4430", "4431", "4432", "4433", "4434",
+    "MI":     ["410"],
+    # Ischemic stroke: require the 5th digit "1" (with cerebral infarction);
+    # 433.x0/434.x0 (occlusion/stenosis WITHOUT infarction) are chronic and
+    # excluded here, and 436 (acute ill-defined CVD).
+    "Stroke": ["43301", "43311", "43321", "43331", "43381", "43391",
+               "43401", "43411", "43491", "436"],
+    "HF":     ["428"],
+    # 42731 = AF, 42732 = atrial flutter (ICD-10 I48 covers both; ICD-9 was
+    # previously AF-only, an asymmetry vs. the ICD-10 definition).
+    "AF":     ["42731", "42732"],
+    "PAD":    ["4402", "4430", "4431", "4432", "4433", "4434",
                "4438", "4439"],
 }
+
+# Prevalent/chronic forms of each endpoint disease, matched in ANY diagnosis
+# position to EXCLUDE patients who already have the disease at/before index
+# (prevalent-case washout). Must be a superset of the incident codes above
+# plus chronic/history codes, so e.g. chronic AF (I48.91) or old MI
+# (412/I25.2) coded before index removes the patient rather than leaking in
+# as a feature. See _assert_history_covers_incident below, which checks this.
+ENDPOINT_HISTORY_ICD10 = {
+    "MI":     ["I21", "I22", "I23", "I252"],
+    "Stroke": ["I63", "I65", "I66", "I693", "Z8673"],
+    "HF":     ["I50", "I110", "I130", "I132"],
+    "AF":     ["I48"],
+    # "I73" (not "I731"/"I738"/"I739") so this also covers the incident code
+    # I730, which the prior list omitted -- prevalent I73.0 patients were not
+    # being washed out even though I73.0 counts as an incident PAD event.
+    "PAD":    ["I70", "I73", "Z95820"],
+}
+ENDPOINT_HISTORY_ICD9 = {
+    "MI":     ["410", "412", "V4581"],
+    "Stroke": ["433", "434", "436", "438", "V1254"],
+    "HF":     ["428", "39891", "40201", "40211", "40291"],
+    "AF":     ["42731", "42732"],
+    # "443" (not "4439" alone) so this covers the incident range
+    # 4430-4438, which the prior list omitted.
+    "PAD":    ["4402", "443", "4471", "V434"],
+}
+
+
+def _assert_history_covers_incident():
+    """Every incident endpoint prefix must be covered by some history prefix.
+
+    Otherwise a patient with the prevalent form of a disease coded before
+    index is not washed out, but the same code family in principal position
+    after index counts as an incident event -- a leakage path.
+    """
+    for label, inc, hist in (
+        ("ICD-10", ENDPOINTS_ICD10, ENDPOINT_HISTORY_ICD10),
+        ("ICD-9", ENDPOINTS_ICD9, ENDPOINT_HISTORY_ICD9),
+    ):
+        for cause, prefixes in inc.items():
+            for p in prefixes:
+                if not any(p.startswith(h) for h in hist[cause]):
+                    raise AssertionError(
+                        f"{label} {cause}: incident code {p!r} not covered by "
+                        f"any ENDPOINT_HISTORY prefix {hist[cause]!r}"
+                    )
+
+
+_assert_history_covers_incident()
 
 # TKG relation types
 RELATIONS = {

@@ -15,29 +15,26 @@ ENDPOINT_PALETTE = {
     "AF": "#1f77b4", "PAD": "#2ca02c", "censored": "#7f7f7f",
 }
 FACT_TYPE_ORDER = ["diagnosis", "procedure", "prescription",
-                   "lab", "icu", "omr_bp", "omr_bmi"]
+                   "lab", "icu", "omr_bp", "omr_bmi",
+                   "vital", "input", "output"]
 
 
 def _figure1_consort(cohort: pd.DataFrame, out_dir: str) -> None:
     """CONSORT-style flow + endpoint pie.
 
-    Step counts come from cohort.csv and the exclusion-cascade summary
-    printed by `build_cohort()`.
+    Step counts are read from `tkg_output/cohort_cascade.csv` (written by
+    `build_cohort()` from the actual run); the figure never hardcodes counts.
     """
-    steps = [
-        ("All MIMIC-IV patients",              364_627),
-        ("Adult-age admissions",               223_452),
-        ("Has cardiometabolic dx",             134_265),
-        ("No endpoint before index",            94_823),
-        (">= 2 admissions",                     51_080),
-        ("Endpoint OR >= 90d follow-up",        len(cohort)),
-    ]
+    cascade_path = os.path.join(OUTPUT_DIR, "cohort_cascade.csv")
+    if not os.path.exists(cascade_path):
+        raise FileNotFoundError(
+            f"Missing {cascade_path}; re-run `python -u -m src.cohort` to "
+            "regenerate the exclusion cascade (no hardcoded fallback).")
+    casc = pd.read_csv(cascade_path)
+    steps = list(zip(casc["step"].tolist(), casc["n_patients"].tolist()))
     excl = [
-        ("age < 18",                  364_627 - 223_452),
-        ("no cardiometabolic dx",     223_452 - 134_265),
-        ("endpoint before index",     134_265 - 94_823),
-        ("< 2 admissions",             94_823 - 51_080),
-        ("< 90d follow-up",            51_080 - len(cohort)),
+        (f"-> {steps[i + 1][0]}", steps[i][1] - steps[i + 1][1])
+        for i in range(len(steps) - 1)
     ]
 
     fig = plt.figure(figsize=(14, 8))
