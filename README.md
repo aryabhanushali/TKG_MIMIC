@@ -1,21 +1,18 @@
 # CardioMM-TKG
 
 **A benchmark and modeling study on MIMIC-IV: predicting circulatory disease in cardiometabolic patients, and testing whether a temporal knowledge graph helps.**
-
-
-
 ## Summary
 
-**The question:** for a patient who has a cardiometabolic condition (diabetes, high blood pressure, high cholesterol, obesity, or metabolic syndrome), can we predict which of five circulatory diseases they'll develop next, and when? And does representing their medical history as a **temporal knowledge graph** (a connected, time-ordered record of everything that happened to them) improve predictions compared to standard approaches?
+For a patient with a cardiometabolic condition (diabetes, high blood pressure, high cholesterol, obesity, or metabolic syndrome), can we predict which of five circulatory diseases they'll develop next, and when? Does representing their medical history as a **temporal knowledge graph** — a connected, time-ordered record of everything that happened to them — improve predictions over standard approaches?
 
-The five diseases: heart attack (MI), stroke, heart failure (HF), atrial fibrillation / irregular heartbeat (AF), and peripheral artery disease (PAD, narrowed leg arteries). Anyone who doesn't develop one of these is "censored" — followed for years with no event.
+The five diseases: heart attack (MI), stroke, heart failure (HF), atrial fibrillation / irregular heartbeat (AF), and peripheral artery disease (PAD, narrowed leg arteries). Patients who don't develop any of these are "censored" — followed for years with no event.
 
-Built a cohort of 33,656 patients from MIMIC-IV, carefully checked to avoid data leakage (see [Section 2](#2-building-the-patient-cohort)), built an 8-type knowledge graph from their records (14.5 million facts), and compared three models: **Cox regression** (the classical statistical approach), **XGBoost** (a strong standard machine-learning model that treats each patient as a flat list of features), and our **temporal knowledge graph model (TGN)**, which reads each patient's history as an ordered sequence of connected, time-stamped events.
+Cohort: 33,656 patients from MIMIC-IV, built with a specific eye toward avoiding data leakage (Section 2). Graph: 8 data types, 14.5 million facts. Three models compared: **Cox regression** (the classical statistical approach), **XGBoost** (a strong standard machine-learning model that treats each patient as a flat list of features), and a **temporal knowledge graph model (TGN)** that reads each patient's history as an ordered sequence of connected, time-stamped events.
 
-**Main finding:** after testing carefully — with statistics, correcting for running many comparisons at once, and repeating training 5 times with different random seeds to make sure results were accurate — the knowledge graph model did **not** reliably beat XGBoost. XGBoost was the strongest model overall. The knowledge graph model showed one solid, repeatable win: it reliably beat classical Cox regression on **peripheral artery disease (PAD)**. On heart attack and atrial fibrillation, it was actually significantly worse than the simpler models. This is a real, useful finding — showing that a more complex model doesn't automatically beat a well-tuned simple one is valuable and common in medical AI, not a failure.
+**Main finding:** the knowledge graph model does not reliably beat XGBoost. This holds up after proper statistics — correcting for running many comparisons at once, and repeating training 5 times with different random seeds to rule out a lucky run. XGBoost was the strongest model overall. TGN's one solid, repeatable win is against classical Cox regression on **peripheral artery disease (PAD)**. On heart attack and atrial fibrillation, TGN was significantly worse than the simpler models.
 
-**Second finding:** partway through, we discovered that our knowledge graph model's "explanations" — the facts it claimed to rely on for each prediction — were meaningless. It was focusing on things like routine IV saline flushes (given to almost every hospital patient, regardless of what's wrong with them) instead of actual disease-relevant facts. This was confirmed this with a test: comparing the facts the model called "important" against a random set of facts, and finding they performed the same. Rraced the cause to how the model was being selected during training — it locked in a version of itself after only 1-2 rounds of training, before it had learned anything meaningful. Fixed this by requiring more training before a model could be selected. Afterward, its explanations became trustworthy and lined up with real medical knowledge (e.g., tying heart attack risk to high blood pressure, high cholesterol, and diabetes). But this came at a cost: prediction accuracy on some diseases dropped once the model was trained properly instead of stopped early by accident.
-\
+**Second finding:** partway through, the knowledge graph model's "explanations" — the facts it claimed to rely on for each prediction — turned out to be meaningless. It was focusing on things like routine IV saline flushes, given to nearly every hospital patient regardless of diagnosis, instead of anything disease-relevant. This was confirmed with a formal test: take the facts the model calls "important," compare them against a random set of facts, and check whether "important" actually performs better. It didn't — statistically identical to random. The cause traced back to how the model was picked during training: it locked in a version of itself after only 1-2 training rounds, before it had learned anything real. Requiring more training before a model could be selected fixed this. Afterward its explanations lined up with real medical knowledge — tying heart attack risk to high blood pressure, high cholesterol, and diabetes — but prediction accuracy on some diseases dropped once the model was properly trained instead of stopped early by accident.
+
 
 ---
 
@@ -41,9 +38,9 @@ Built a cohort of 33,656 patients from MIMIC-IV, carefully checked to avoid data
 
 ## 1. The research question
 
-> Among patients with a new cardiometabolic diagnosis, can we predict — using only their medical history up to that point — which circulatory disease they'll develop next, and how soon? Does representing that history as a time-ordered, connected knowledge graph improve predictions compared to standard models that just look at a flat list of facts about the patient?
+> Among patients with a new cardiometabolic diagnosis, can their medical history up to that point predict which circulatory disease they'll develop next, and how soon? Does representing that history as a time-ordered, connected knowledge graph improve predictions over standard models that just look at a flat list of facts about the patient?
 
-The five outcomes we tried to predict (a patient can only have one *first* event, so the diseases "compete" to happen first):
+The five outcomes (a patient can only have one *first* event, so the diseases compete to happen first):
 
 | Code | Disease |
 |---|---|
@@ -53,29 +50,29 @@ The five outcomes we tried to predict (a patient can only have one *first* event
 | AF | Atrial fibrillation |
 | PAD | Peripheral artery disease |
 
-This project has two parts: **(1)** a benchmark dataset — raw MIMIC-IV records turned into a time-stamped knowledge graph across 8 data types — and **(2)** a comparison of three models under a strict no-leakage setup, where the model's explanations are actually tested for validity rather than just shown.
+Two parts to this project: a benchmark dataset — raw MIMIC-IV records turned into a time-stamped knowledge graph across 8 data types — and a comparison of three models under a strict no-leakage setup, with the model's explanations actually tested for validity rather than just shown.
 
 ---
 
 ## 2. Building the patient cohort
 
-We scan every MIMIC-IV hospital admission and apply a series of filters:
+Every MIMIC-IV hospital admission gets filtered down through a series of steps:
 
 1. Keep only adult patients (age 18+).
-2. Find each patient's earliest admission with a cardiometabolic diagnosis (diabetes, high blood pressure, high cholesterol, obesity, or metabolic syndrome). This admission date becomes the **index date** — the starting point for prediction.
-3. Find the first admission *after* the index date where a circulatory disease is the **main reason for that admission** (not just something mentioned in passing) — this is the disease we're trying to predict, and when it happened.
-4. Remove anyone who already had a chronic or prior form of *any* of the five diseases, however it was recorded, at or before the index date. This is called a "washout" — it makes sure we're only trying to predict genuinely new disease, not disease someone already had.
-5. Require at least 2 hospital visits and at least 90 days of follow-up (or an actual disease event).
+2. Find each patient's earliest admission with a cardiometabolic diagnosis (diabetes, high blood pressure, high cholesterol, obesity, or metabolic syndrome). That admission date becomes the **index date** — the starting point for prediction.
+3. Find the first admission *after* the index date where a circulatory disease is the **main reason for that admission**, not just something mentioned in passing. This is the disease being predicted, and when it happened.
+4. Remove anyone who already had a chronic or prior form of *any* of the five diseases, however it was recorded, at or before the index date — a "washout" that keeps the prediction target to genuinely new disease.
+5. Require at least 2 hospital visits and at least 90 days of follow-up, or an actual disease event.
 
-We also calculate the Charlson Comorbidity Index (CCI), a standard score of overall health burden, at the index date.
+The Charlson Comorbidity Index (CCI), a standard score of overall health burden, is computed at the index date.
 
-### Why steps 3 and 4 matter, and what they cost us
+### Why steps 3 and 4 matter, and what they cost
 
-An earlier version of this cohort logic counted a disease as "new" if it was mentioned *anywhere* on a later admission, even as a minor side-note — and used that same loose rule to check for prior disease. That's a problem: a chronic condition that's just mentioned in passing (like "known atrial fibrillation") could get counted as a *brand-new* case, and that same loose matching meant a patient's earlier chart could show that exact condition as an apparent "warning sign" for a disease they actually already had. That's a leak — the model would be predicting something it was secretly already being told about.
+An earlier version of this cohort logic counted a disease as "new" if it was mentioned *anywhere* on a later admission, even as a minor side note, and used that same loose rule to check for prior disease. That's a leak: a chronic condition mentioned in passing (say, "known atrial fibrillation") could get counted as a brand-new case, and the identical loose matching would let a patient's earlier chart show that exact condition as an apparent "warning sign" for a disease they already had. The model would effectively be predicting something it was secretly already being told.
 
-Fixing this (requiring the disease to be the *main* reason for the later admission, and removing anyone with any earlier record of it) closes that leak, but it does cost us some patients:
+Requiring the disease to be the main reason for the later admission, and removing anyone with any earlier record of it, closes that leak — at a real cost in patients:
 
-| Disease | Patients where it's mentioned anywhere | Patients where it's the main reason for admission (what we actually count) | % kept |
+| Disease | Patients where it's mentioned anywhere | Patients where it's the main reason for admission (what's actually counted) | % kept |
 |---|---|---|---|
 | MI | 13,152 | 7,700 | 59% |
 | Stroke | 8,308 | 5,786 | 70% |
@@ -83,7 +80,7 @@ Fixing this (requiring the disease to be the *main* reason for the later admissi
 | AF | 35,167 | 4,809 | 14% |
 | PAD | 10,717 | 2,354 | 22% |
 
-Heart failure and atrial fibrillation lose the most patients under this stricter rule. That's because they're very often noted as a side issue during a hospital stay for something else (like a patient admitted for pneumonia who also happens to have ongoing heart failure) — it's a real pattern in how hospitals code these conditions, not a bug in our logic. Separately, the washout step removes 52,901 patients total (some for more than one disease): 17,081 for MI, 15,255 for stroke, 19,003 for HF, 23,758 for AF, and 6,679 for PAD.
+Heart failure and atrial fibrillation lose the most patients here, because they're very often noted as a side issue during a hospital stay for something else — a patient admitted for pneumonia who also happens to have ongoing heart failure, for example. That's a real pattern in how hospitals code these conditions, not a flaw in the extraction logic. Separately, the washout step removes 52,901 patients total (some for more than one disease): 17,081 for MI, 15,255 for stroke, 19,003 for HF, 23,758 for AF, 6,679 for PAD.
 
 ### Final cohort: 33,656 patients
 
@@ -97,15 +94,15 @@ Heart failure and atrial fibrillation lose the most patients under this stricter
 | Censored (no event) | 30,293 | 90.0% | 62 | 55.1% | 1 | 35.5% | ~3.1 |
 | **Total** | **33,656** | 100% | 62 | 54.6% | 1 | 37.8% | ~3.1 |
 
-Heart failure patients are the sickest group overall — highest comorbidity score and the most ICU stays, which makes sense since HF is often a later complication of long-term cardiometabolic disease.
+Heart failure patients are the sickest group overall — highest comorbidity score, most ICU stays — which fits HF's usual role as a later complication of long-running cardiometabolic disease.
 
-Files: `tkg_output/cohort.csv` and `cohort_cascade.csv` (the exact filtering counts above, used directly to draw the flow-diagram figure — nothing is hardcoded).
+Files: `tkg_output/cohort.csv` and `cohort_cascade.csv` (the exact filtering counts above, used directly to draw the flow-diagram figure — nothing hardcoded).
 
 ---
 
 ## 3. Building the knowledge graph
 
-For every patient, we pull events from **8 different types of hospital data** and turn each one into a simple building block: *this patient, had this fact, at this time, optionally with this value.*
+For every patient, events get pulled from 8 types of hospital data and turned into a simple building block: *this patient, had this fact, at this time, optionally with this value.*
 
 | Data type | Where it comes from | Example | Has a number attached? |
 |---|---|---|---|
@@ -118,9 +115,9 @@ For every patient, we pull events from **8 different types of hospital data** an
 | Vital signs | ICU monitoring | Heart rate, oxygen level | Yes, the reading |
 | IV fluids / drainage | ICU fluid tracking | IV fluids given, urine output | Yes, the amount |
 
-For each patient we only use data from the 5 years before their index date, and stop before their disease event (or their last known follow-up if they never had one) — so the model never sees the future. Lab results and ICU vital signs are large enough that we sample a portion of them (30% and 10%) to keep this manageable, while still capturing the overall pattern.
+Each patient's data is limited to the 5 years before their index date, and stops before their disease event (or their last known follow-up, if they never had one) — the model never sees the future. Lab results and ICU vital signs are large enough that only a portion is sampled (30% and 10%) to keep processing manageable while still capturing the overall pattern.
 
-**Result: 14,480,074 facts** covering 32,965 distinct medical concepts and 33,656 patients (66,621 total "things" in the graph). On average, each patient has about 430 facts (typical patient: 221).
+**Result: 14,480,074 facts** across 32,965 distinct medical concepts and 33,656 patients (66,621 total nodes). Average 430 facts per patient (median 221).
 
 | Data type | Number of facts | Share |
 |---|---|---|
@@ -136,31 +133,31 @@ For each patient we only use data from the 5 years before their index date, and 
 | Main diagnosis (per visit) | 140,916 | 1.0% |
 | ICU stays | 17,426 | 0.1% |
 
-We double-checked the raw medication data file against PhysioNet's official checksum and confirmed it downloaded completely and correctly — an earlier concern that this file might be partially corrupted does not apply to the numbers here.
+The raw medication data file was checked against PhysioNet's official checksum and downloaded completely and correctly — an earlier concern about partial corruption doesn't apply to these numbers.
 
 ---
 
 ## 4. Checking the graph is correct
 
-We ran 8 automated checks on the finished graph. **All 8 pass:**
+8 automated checks run on the finished graph. All 8 pass:
 
-1. No fact is dated on or after a patient's disease event (no "seeing the future").
+1. No fact is dated on or after a patient's disease event — no seeing the future.
 2. Every patient in the cohort has at least one fact (11 patients, 0.03%, have very few — a trivial edge case).
 3. No patient has the same medical code entered under both old and new coding systems at the same time.
 4. Disease counts in the graph match the cohort file exactly.
 5. No fact falls outside the intended 5-year window.
 6-8. Key cardiometabolic drugs and labs (metformin, statins, HbA1c, creatinine, etc.) are present with realistic counts.
 
-**One honest limitation:** the specific lab test "BNP" (a heart failure marker) doesn't appear at all in our data — MIMIC-IV records a related but different version of this test (NT-proBNP, which we do have, 5,822 facts) under a different label than what our matching rules look for. And for heart attack, the marker we capture is specifically "Troponin T" (9,010 facts) rather than "Troponin I" (only 43 facts). Anyone writing this up should say plainly: heart failure prediction is missing a natriuretic-peptide lab feature, and the heart attack marker used is troponin T specifically.
+One honest limitation: the specific lab test "BNP," a heart failure marker, doesn't appear in the data at all — MIMIC-IV records a related test (NT-proBNP, which is present, 5,822 facts) under a different label than the matching rules look for. The heart attack marker captured is specifically Troponin T (9,010 facts), not Troponin I (43 facts, negligible). Worth stating plainly: heart failure prediction is missing a natriuretic-peptide lab feature, and the heart attack marker is troponin T specifically.
 
 ---
 
 ## 5. Preparing the data for modeling
 
-- We keep only facts from the 5 years before each patient's index date: **2,283,125 events** used for modeling, out of the 14.5 million total facts.
-- We split patients 70% training / 15% validation / 15% test, keeping the same disease mix in each group, using a fixed random seed so the split is reproducible.
-- Basic patient info used as features: age, sex, comorbidity score, number of cardiometabolic conditions, whether they had an ICU stay.
-- Every numeric value (labs, vitals, etc.) is standardized using only the training patients' statistics, so no information from the validation or test patients leaks into how the data is scaled.
+- Only facts from the 5 years before each patient's index date are used: 2,283,125 events out of the 14.5 million total.
+- Patients are split 70% training / 15% validation / 15% test, keeping the same disease mix in each group, with a fixed random seed so the split is reproducible.
+- Basic patient info used as features: age, sex, comorbidity score, number of cardiometabolic conditions, ICU-stay flag.
+- Every numeric value (labs, vitals) is standardized using only the training patients' statistics, so nothing from validation or test leaks into how the data is scaled.
 
 | Disease | Training | Validation | Test |
 |---|---|---|---|
@@ -172,29 +169,29 @@ We ran 8 automated checks on the finished graph. **All 8 pass:**
 | Censored | 21,205 | 4,544 | 4,544 |
 | **Total** | **23,559** | **5,048** | **5,049** |
 
-The number of actual disease cases in the test set is small, especially for PAD (46 patients). We say this plainly rather than hide it — it's exactly why we also report confidence intervals and repeat training with 5 different random seeds (see Section 8), rather than trusting a single run.
+The number of actual disease cases in the test set is small, especially for PAD (46 patients) — disclosed rather than hidden, and the reason confidence intervals and a 5-seed repeat (Section 8) matter more here than they would with a bigger cohort.
 
 ---
 
 ## 6. The three models
 
-**Cox regression** — the traditional statistical method for this kind of prediction problem. One model is fit per disease.
+**Cox regression** — the traditional statistical method for this kind of problem. One model per disease.
 
-**XGBoost** — a strong, widely-used machine learning model. It sees each patient as a flat list of features: which medical codes they have, summary statistics of their lab values (average, highest, lowest, most recent, trend), and their basic info — with no sense of order or connection between events.
+**XGBoost** — a strong, widely-used machine learning model. Sees each patient as a flat list of features: which medical codes they have, summary statistics of their lab values (average, highest, lowest, most recent, trend), and their basic info, with no sense of order or connection between events.
 
-**Our temporal knowledge graph model (TGN)** — reads a patient's most recent 256 events *in order*, as a connected sequence. Each event is represented by combining what it is, what kind of relationship it represents, when it happened relative to the index date, and its value if it has one. This sequence is processed by a small Transformer (the same family of model behind modern language models) and then boiled down into one summary vector for the patient using a learned "attention" mechanism that highlights the most relevant events. The final prediction is a probability of each disease happening within each time window, output all at once.
+**The temporal knowledge graph model (TGN)** — reads a patient's most recent 256 events in order, as a connected sequence. Each event combines what it is, what kind of relationship it represents, when it happened relative to the index date, and its value if it has one. A small Transformer (the same family of model behind modern language models) processes the sequence and boils it down into one summary vector per patient, using a learned attention mechanism that highlights the most relevant events. The output is a probability of each disease happening within each time window.
 
-**An important note about how we picked the "final" version of this model.** In our first attempt, training was set up to stop automatically once it stopped improving on a validation check — and every one of 5 independent training runs stopped after just 1-2 passes through the data. We later discovered (Section 9) that the model saved at that point had explanations that were statistically meaningless. So we changed the rule: **the model must train for at least 15 full passes before it's allowed to be considered "done."** With that fix, all 5 runs trained for 21-23 passes before stopping. **Every result in this document uses the properly-trained version.** The full comparison between the too-early version and the properly-trained version is in Section 9, because it's an important finding in its own right, not just a technical footnote.
+**A note on how the "final" version of this model was picked.** The first attempt used automatic stopping once a validation check stopped improving — and every one of 5 independent training runs stopped after just 1-2 passes through the data. Section 9 shows why that's a problem: the model saved at that point had explanations that were statistically meaningless. The fix was to require at least 15 full passes before a model becomes eligible to be called "done." With that change, all 5 runs trained for 21-23 passes before stopping. Every result in this document uses the properly-trained version. The comparison between the two versions is in Section 9 — it's a real finding, not a footnote.
 
 ---
 
 ## 7. How we measured success
 
-- **The metric: AUROC.** A score from 0.5 (no better than a coin flip) to 1.0 (perfect) measuring how well the model ranks patients who will get a disease above those who won't.
-- **Correctly handling "competing" diseases.** If we're checking whether a model predicted heart attack well, and a patient instead got a stroke first, that patient should count as a "no" for heart attack — not be thrown out of the analysis, which is what a simpler (and overly generous) scoring method would do. We fixed this everywhere in the project. Patients who were simply lost to follow-up before the time window ended are still excluded, since we genuinely don't know what would have happened to them.
-- **Confidence intervals and significance testing.** For our main results we compute a 95% confidence interval (by resampling the test patients 2,000 times) and use a standard statistical test (DeLong's test) to check whether one model is really better than another, or if the difference could just be noise.
-- **Repeating training 5 times.** To make sure we aren't reporting a lucky (or unlucky) one-off result, we retrained the knowledge graph model and XGBoost five times each, with different random starting points (Cox regression doesn't have meaningful randomness to vary, so it's reported once). We then use a statistical test (Welch's t-test) to compare the five results from each model, and because we're running 30 comparisons at once (5 diseases x 3 time windows x 2 model comparisons), we apply a strict correction (Bonferroni) so we don't accidentally call something "significant" just because we tested so many things.
-- **The test set is used exactly once** per trained model, at the very end. Every decision about how to normalize data, which codes to use, or which model checkpoint to keep, is made using only the training and validation patients.
+- **The metric: AUROC.** A score from 0.5 (a coin flip) to 1.0 (perfect) measuring how well the model ranks patients who will get a disease above those who won't.
+- **Handling "competing" diseases correctly.** If a model is being checked on whether it predicted heart attack, and a patient got a stroke first instead, that patient counts as a "no" for heart attack — not thrown out of the analysis, which is what a simpler, overly generous scoring method would do. Fixed everywhere in this project. Patients simply lost to follow-up before the time window ended are still excluded, since what would have happened to them is genuinely unknown.
+- **Confidence intervals and significance testing.** The main results include a 95% confidence interval (resampling the test patients 2,000 times) and a standard statistical test (DeLong's) for whether one model is really better than another, or if the gap is just noise.
+- **Repeating training 5 times.** To rule out a lucky or unlucky one-off run, TGN and XGBoost were each retrained five times with different random seeds (Cox has no meaningful randomness to vary, so it's reported once). The five results per model are compared with Welch's t-test, and because 30 comparisons are running at once (5 diseases × 3 time windows × 2 model comparisons), a strict correction (Bonferroni) is applied so nothing gets called "significant" just from sheer number of tests.
+- **The test set is used exactly once** per trained model, at the very end. Every decision about normalization, which codes to use, or which model checkpoint to keep is made using only training and validation data.
 
 ---
 
@@ -232,22 +229,22 @@ The number of actual disease cases in the test set is small, especially for PAD 
 
 ### 8.4 The 5-seed check — the most trustworthy result
 
-We trained TGN and XGBoost five times each with different random seeds and compared the two sets of five results, applying a strict correction for testing many things at once. This is the most rigorous comparison in the study:
+TGN and XGBoost were each trained five times with different random seeds, then compared with the strict correction described above. This is the most rigorous comparison in the study:
 
 | Disease | Time window | Cox | XGBoost (average ± spread) | TGN (average ± spread) | Holds up after strict correction? |
 |---|---|---|---|---|---|
-| MI | 3yr | 0.742 | 0.721 ± 0.010 | 0.683 ± 0.015 | **Yes — TGN is worse than Cox** |
-| MI | 5yr | 0.690 | 0.717 ± 0.010 | 0.672 ± 0.006 | **Yes — TGN is worse than XGBoost** |
-| AF | 5yr | 0.670 | 0.677 ± 0.028 | 0.651 ± 0.004 | **Yes — TGN is worse than Cox** |
-| PAD | 3yr | 0.592 | 0.682 ± 0.019 | 0.661 ± 0.020 | **Yes — TGN is better than Cox** |
-| PAD | 5yr | 0.568 | 0.671 ± 0.021 | 0.675 ± 0.020 | **Yes — TGN is better than Cox** |
+| MI | 3yr | 0.742 | 0.721 ± 0.010 | 0.683 ± 0.015 | Yes — TGN worse than Cox |
+| MI | 5yr | 0.690 | 0.717 ± 0.010 | 0.672 ± 0.006 | Yes — TGN worse than XGBoost |
+| AF | 5yr | 0.670 | 0.677 ± 0.028 | 0.651 ± 0.004 | Yes — TGN worse than Cox |
+| PAD | 3yr | 0.592 | 0.682 ± 0.019 | 0.661 ± 0.020 | Yes — TGN better than Cox |
+| PAD | 5yr | 0.568 | 0.671 ± 0.021 | 0.675 ± 0.020 | Yes — TGN better than Cox |
 | The other 10 of 15 comparisons | — | — | — | — | Not proven either way with only 5 seeds |
 
-**What this means:** no claim that "the knowledge graph model wins" survives this level of scrutiny. Where there's a real, provable difference, TGN is usually the *worse* model (heart attack, atrial fibrillation). The one genuine, repeatable win for TGN is against Cox regression on peripheral artery disease — it doesn't clearly beat XGBoost there, but it's no longer clearly behind it either. XGBoost is the strongest model overall on this data. We're reporting this as the real, main finding — not softening it.
+No version of "the knowledge graph model wins" survives this level of scrutiny. Where there's a real, provable difference, TGN is usually the worse model — heart attack, atrial fibrillation. The one genuine, repeatable win for TGN is against Cox on peripheral artery disease; it doesn't clearly beat XGBoost there, but it's no longer clearly behind it either. XGBoost is the strongest model overall on this data, and that's reported as the main finding, not softened.
 
 ### 8.5 The version with clinical notes
 
-We did not evaluate the version of the model that also reads doctors' discharge notes (using a language model called BioBERT) for these results. We found a specific problem in that part of the code: only about 9% of patients have a usable note, and the way the note data gets standardized is thrown off by the 91% of patients who don't have one. We're flagging this clearly for anyone who wants to pick this up, but it wasn't required to answer our main question, and with only 9% coverage its effect either way would likely be small.
+Not evaluated for these results. There's a specific problem in that part of the code: only about 9% of patients have a usable discharge note, and the way the note data gets standardized is thrown off by the 91% of patients who don't have one — the normalization statistics end up skewed toward "no note" rather than what a real note looks like. Flagged here for anyone picking this up, but it wasn't required to answer the main question, and with 9% coverage its effect either way would likely be small.
 
 ---
 
@@ -255,20 +252,20 @@ We did not evaluate the version of the model that also reads doctors' discharge 
 
 ### 9.1 Two different questions
 
-"Where is the model looking?" (its attention weights) is a different question from "does that actually matter to its prediction?" To answer the second question, we used a tool called **GNNExplainer** together with a fidelity test: take the top 20% of events the model calls "important," and check — does keeping *only* those events preserve the prediction better than keeping a random 20%? And does removing *only* those events break the prediction more than removing a random 20%? A real, meaningful explanation should pass both checks clearly. If "important" performs the same as "random," the explanation isn't telling us anything real.
+"Where is the model looking?" (attention weights) is a different question from "does that actually matter to the prediction?" The second question was checked with a tool called GNNExplainer plus a fidelity test: take the top 20% of events the model calls "important," and check whether keeping only those events preserves the prediction better than keeping a random 20%. Separately, check whether removing the top 20% breaks the prediction more than removing a random 20%. A real explanation should pass both checks clearly. If "important" performs the same as "random," the explanation carries no information.
 
-### 9.2 What we found with the too-early model
+### 9.2 What the too-early model looked like
 
-The first version of our model (the one that stopped training after just 1-2 passes) put most of its attention on things like a routine IV saline flush — something given to nearly every hospitalized patient regardless of their condition — rather than on actual diagnoses. Only 6-11% of its attention went to diagnosis codes; 34-48% went to medications like the saline flush. The fidelity test confirmed this wasn't just an odd-but-valid pattern: the "important" events performed statistically the same as randomly picked events, in both checks. The model's explanations carried no real information, even though its raw predictions still looked reasonable.
+The first version of the model — the one that stopped training after just 1-2 passes — put most of its attention on things like a routine IV saline flush, given to nearly every hospitalized patient regardless of diagnosis, rather than on actual diagnoses. Only 6-11% of attention went to diagnosis codes; 34-48% went to medications like the saline flush. The fidelity test confirmed this wasn't just an odd-but-valid pattern: the "important" events performed statistically the same as randomly picked ones, on both checks. The explanations carried no real information, even though the raw predictions still looked reasonable.
 
 ### 9.3 What changed after requiring more training
 
 | | Before (stopped after 1 round) | After (properly trained, 15+ rounds) |
 |---|---|---|
-| Attention on diagnosis codes (heart attack) | ~9% | **62%** |
+| Attention on diagnosis codes (heart attack) | ~9% | 62% |
 | Top facts for heart attack | Saline flush, routine lab values | High blood pressure, high cholesterol, coronary artery disease, diabetes |
-| Does "important" beat "random" at preserving the prediction? | No — identical | **Yes — clearly and measurably better** |
-| Does removing "important" hurt more than removing "random"? | No — identical | **Yes — over twice as much damage** |
+| Does "important" beat "random" at preserving the prediction? | No — identical | Yes, clearly and measurably |
+| Does removing "important" hurt more than removing "random"? | No — identical | Yes, over twice the damage |
 
 Where the model's attention goes, by data type, after the fix:
 
@@ -280,39 +277,39 @@ Where the model's attention goes, by data type, after the fix:
 | AF | 59.4% | 15.4% | 9.3% | 4.7% | 6.5% | 3.7% | 0.5% |
 | PAD | 64.6% | 8.6% | 7.6% | 8.9% | 7.1% | 2.5% | 0.4% |
 
-Diagnosis codes are now clearly the dominant, trustworthy signal for every disease.
+Diagnosis codes are now the dominant, trustworthy signal for every disease.
 
 ### 9.4 What's distinctive about each disease, according to the model
 
-Beyond raw attention, we checked which facts are disproportionately linked to *one specific* disease rather than being generically common across all five:
+Beyond raw attention, a check for which facts are disproportionately linked to one specific disease, rather than being generically common across all five:
 
 | Disease | Cases in test set | Distinctive facts the model relies on |
 |---|---|---|
-| MI | 137 | Type-2 diabetes, chest pain history, HbA1c, **coronary artery disease**, high cholesterol |
+| MI | 137 | Type-2 diabetes, chest pain history, HbA1c, coronary artery disease, high cholesterol |
 | Stroke | 107 | Sodium level, normal blood pressure readings, kidney function, obesity, hypertension |
-| HF | 112 | Kidney function (**the well-known heart-kidney link**), diabetes, **prior coronary artery disease** (the classic path from heart attack to heart failure), obesity |
+| HF | 112 | Kidney function (the heart-kidney link), diabetes, prior coronary artery disease (the classic path from heart attack to heart failure), obesity |
 | AF | 103 | Overweight/obesity, bicarbonate level, LDL cholesterol, specific cardiac procedures |
-| PAD | 46 | High blood pressure, hypertension diagnosis (only 3 facts had enough patients behind them to count as reliable, since the PAD group is small) |
+| PAD | 46 | High blood pressure, hypertension diagnosis — only 3 facts had enough patients behind them to count as reliable, reflecting the small PAD sample |
 
-This is the strongest evidence that the model is reasoning sensibly: coronary artery disease specifically flags heart attack risk, and shows up again as a warning sign for heart failure — matching the well-known medical progression from heart attack to heart failure. Kidney function flagging heart failure risk matches the well-documented "heart-kidney" connection in medicine.
+Coronary artery disease flagging heart attack risk, and showing up again as a warning sign for heart failure, matches the well-known medical progression from heart attack to heart failure. Kidney function flagging heart failure risk matches the documented heart-kidney connection. This is the strongest evidence that the model is reasoning sensibly rather than picking up noise.
 
-*One caveat:* GNNExplainer's own list of top facts per disease (feeding figure 17) isn't filtered for how many patients each fact applies to, so some of its top entries are one-off quirks from a single patient rather than a real pattern. This doesn't affect the overall fidelity numbers above, which are the trustworthy part of this check — just the detailed per-fact list in that one figure.
+One caveat: GNNExplainer's own list of top facts per disease (figure 17) isn't filtered for how many patients each fact applies to, so some top entries are one-off quirks from a single patient. This doesn't affect the fidelity numbers above, which are the trustworthy part of this check — just the detailed per-fact list in that one figure.
 
 ### 9.5 The bottom line
 
-**Picking a "final" model based only on its validation accuracy can accidentally select a version whose stated reasons for its predictions are meaningless, even when the predictions themselves look fine.** Requiring a minimum amount of real training fixed this completely — its explanations became genuine and lined up with real medical knowledge — but cost some raw accuracy on certain diseases. Accuracy and trustworthy explanations were not the same thing here, and optimizing only for accuracy would have quietly shipped a model that explained itself with noise. We see this as a genuine lesson for how AI models should be checked before their explanations are trusted, not something to downplay.
+Picking a "final" model based only on validation accuracy can select a version whose stated reasons for its predictions are meaningless, even when the predictions themselves look fine. Requiring a minimum amount of real training fixed this completely — the explanations became genuine and lined up with real medical knowledge — but cost some raw accuracy on certain diseases. Accuracy and trustworthy explanations weren't the same thing here, and optimizing only for accuracy would have quietly shipped a model that explained itself with noise.
 
 ---
 
 ## 10. Limitations
 
 - **Single hospital system.** All data comes from one Boston hospital; how well this generalizes elsewhere is untested.
-- **The clinical-notes version of the model wasn't evaluated**, and has a known, unfixed issue (Section 8.5) for anyone extending this work.
-- **No model here clearly wins overall** once tested rigorously, except TGN beating Cox specifically on PAD. XGBoost is the strongest model on this data — we report that plainly rather than soften it.
-- **Small numbers of actual disease cases in testing**, especially PAD (46 patients), which is why the confidence intervals are wide.
-- **Heart failure and atrial fibrillation are defined strictly on purpose** (main-reason-for-admission only, broad washout), which trades away some statistical power for cleaner, leak-free labels — the exact cost is shown in Section 2.
-- **Patients lost to follow-up are simply excluded** from a given time-window's scoring rather than statistically reweighted — a standard, disclosed simplification.
-- **Labs and vital signs are sampled** (30% / 10%) rather than fully complete, purely to keep processing manageable.
+- **The clinical-notes version wasn't evaluated**, and has a known, unfixed issue (Section 8.5) for anyone extending this work.
+- **No model here clearly wins overall** once tested rigorously, except TGN beating Cox on PAD specifically. XGBoost is the strongest model on this data.
+- **Small numbers of actual disease cases in testing**, especially PAD (46 patients), hence the wide confidence intervals.
+- **HF and AF are defined strictly on purpose** (main-reason-for-admission only, broad washout), trading away some statistical power for cleaner, leak-free labels — the exact cost is in Section 2.
+- **Patients lost to follow-up are simply excluded** from a given time window's scoring rather than statistically reweighted — a standard, disclosed simplification.
+- **Labs and vital signs are sampled** (30% / 10%) rather than fully complete, to keep processing manageable.
 - **Only 5 random seeds** were used for the robustness check — a reasonable minimum, not a generous number. More would tighten the confidence estimates further, especially for PAD.
 
 ---
@@ -321,14 +318,14 @@ This is the strongest evidence that the model is reasoning sensibly: coronary ar
 
 The test set is used exactly once per trained model, at the very end.
 
-- **The train/validation/test split is fixed once**, using a fixed random seed, and never changes.
-- **Any medical code that only appears in the test set is treated as "unknown"** — the model never gets a real, learned understanding of it, since that would mean it learned something from data it shouldn't have seen yet.
-- **All numeric scaling (labs, vitals, etc.) is based on training patients only.**
-- **The time windows used by the model's prediction head are also set using training patients only.**
-- **No fact used for prediction is ever dated on or after the outcome it's predicting** — this is enforced directly in the code and double-checked separately afterward.
-- **The washout step** (Section 2) closes a specific leak where a chronic condition, mentioned casually, could act as both a "warning sign" before the fact and the "outcome" itself. A safety check runs automatically every time the code starts, confirming every disease code counted as an outcome is also covered by the washout rule — so this exact kind of bug can't quietly come back.
-- **Which model checkpoint to keep is decided using validation data only**; test results are never looked at until the very end.
-- **The rarer diseases are up-weighted during training using training-set statistics only**, so the model pays enough attention to them without any test-set information involved.
+- The train/validation/test split is fixed once, with a fixed random seed, and never changes.
+- Any medical code that only appears in the test set is treated as "unknown" — never given a real, learned representation, since that would mean the model learned something from data it shouldn't have seen yet.
+- All numeric scaling (labs, vitals) is based on training patients only.
+- The time windows used by the model's prediction head are also set using training patients only.
+- No fact used for prediction is ever dated on or after the outcome it's predicting — enforced directly in the code and double-checked separately afterward.
+- The washout step (Section 2) closes a specific leak where a chronic condition, mentioned casually, could act as both a warning sign before the fact and the outcome itself. A safety check runs automatically every time the code starts, confirming every disease code counted as an outcome is also covered by the washout rule — so this exact bug can't quietly come back.
+- Which model checkpoint to keep is decided using validation data only; test results aren't looked at until the very end.
+- The rarer diseases are up-weighted during training using training-set statistics only.
 
 ---
 
@@ -359,10 +356,10 @@ $PY -u -m src.multi_seed_summary
 ```
 
 **Settings you can change:**
-- `TKG_USE_NOTES` — `0` (structured data only; used for every result in this document) or `1` (also uses clinical notes; not evaluated here, see Section 8.5).
-- `TKG_SEED` — changes only the model's own randomness (how its weights start, dropout, batch order). It does **not** change the train/validation/test split, which stays fixed no matter what seed you use — every seed sees exactly the same data, just trains the model slightly differently. Seed 42 is the main one used everywhere by default; seeds 43-46 write to their own separate folders so they never overwrite it.
+- `TKG_USE_NOTES` — `0` (structured data only; used for every result here) or `1` (also uses clinical notes; not evaluated in this work, see Section 8.5).
+- `TKG_SEED` — changes only the model's own randomness (weight init, dropout, batch order), not the train/validation/test split, which stays fixed no matter what seed is used. Seed 42 is the default everywhere; seeds 43-46 write to their own separate folders so they never overwrite it.
 
-**Other scripts you can run, once the steps above are done:**
+**Other scripts, once the steps above are done:**
 
 | Script | Needs | Produces |
 |---|---|---|
@@ -437,7 +434,7 @@ transformers   # only needed for the optional clinical-notes add-on
 matplotlib, seaborn, tqdm
 ```
 
-**Data:** MIMIC-IV v3.1, plus MIMIC-IV-Note v2.2 if you want the optional clinical-notes version. Both require separate, credentialed access through PhysioNet. This repository contains no patient data — only the code that builds everything from the raw files.
+**Data:** MIMIC-IV v3.1, plus MIMIC-IV-Note v2.2 for the optional clinical-notes version. Both require separate, credentialed access through PhysioNet. This repository contains no patient data — only the code that builds everything from the raw files.
 
 ---
 
@@ -445,7 +442,7 @@ matplotlib, seaborn, tqdm
 
 | Setting | Value |
 |---|---|
-| How far back we look before the index date | 5 years |
+| How far back the model looks before the index date | 5 years |
 | Minimum follow-up required | 90 days |
 | Lab / vital sign sampling | 30% / 10% |
 | Longest event sequence the model reads | 256 events |
@@ -455,4 +452,4 @@ matplotlib, seaborn, tqdm
 | Minimum training rounds before a model can be selected | 15 |
 | How long training can run before stopping automatically | up to 30 rounds, stops after 6 rounds without improvement |
 | Number of random seeds used for the robustness check | 5 (seeds 42-46) |
-| Main/default seed | 42 |
+| Default seed | 42 |
