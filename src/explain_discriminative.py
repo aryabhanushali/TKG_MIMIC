@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from src.config import OUTPUT_DIR, FIGURES_DIR
+from src.config import OUTPUT_DIR, FIGURES_DIR, read_events_table
 
 EXPLAIN_DIR = os.path.join(OUTPUT_DIR, "explain")
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
@@ -37,10 +37,7 @@ def run() -> None:
 
     sid_to_label = dict(zip(labels["subject_id"], labels["endpoint_type"]))
     per_patient["endpoint"] = per_patient["subject_id"].map(sid_to_label)
-    events = pd.read_csv(
-        os.path.join(MODELING_DIR, "events.csv"),
-        usecols=["subject_id", "concept_node_idx"], low_memory=False,
-    )
+    events = read_events_table(usecols=["subject_id", "concept_node_idx"])
     train_ids = set(labels.loc[labels["split"] == "train", "subject_id"])
     train_concepts = sorted(
         events.loc[events["subject_id"].isin(train_ids), "concept_node_idx"]

@@ -18,7 +18,7 @@ import torch
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from src.config import OUTPUT_DIR, FIGURES_DIR
+from src.config import OUTPUT_DIR, FIGURES_DIR, read_events_table
 from src.tgn_model import (
     PatientEventsDataset, collate,
     _prepare_data, _set_seed,
@@ -44,10 +44,7 @@ CAUSE_COLORS = {
 def _load_concept_remap_lookup(labels_df: pd.DataFrame):
     """Reconstruct emb_idx -> concept_id, mirroring `_prepare_data`:
     train-only concepts indexed 1..N, 0 = UNK."""
-    events = pd.read_csv(
-        os.path.join(OUTPUT_DIR, "modeling", "events.csv"),
-        usecols=["subject_id", "concept_node_idx"], low_memory=False,
-    )
+    events = read_events_table(usecols=["subject_id", "concept_node_idx"])
     nodes = pd.read_csv(os.path.join(OUTPUT_DIR, "modeling", "node_metadata.csv"))
     nodes_by_idx = nodes.set_index("node_idx")["concept_id"].to_dict()
     nodes_ft_by_idx = nodes.set_index("node_idx")["fact_type"].to_dict()
