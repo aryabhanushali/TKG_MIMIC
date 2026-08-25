@@ -146,11 +146,19 @@ def _prepare_survival_targets(labels_df: pd.DataFrame, time_edges: np.ndarray):
         sid = int(r.subject_id)
         dur = float(r.time_to_event_days) if pd.notna(r.time_to_event_days) else 0.0
         dur = max(dur, 0.0)
-        # event_idx: 0 = censored, else CAUSE_TO_IDX[label]
+        # event_idx: 0 = censored, else CAUSE_TO_IDX[label]. An unrecognized
+        # endpoint_type must fail loudly, not silently get counted as
+        # censored -- that would quietly corrupt training labels instead of
+        # surfacing a real data problem.
         if r.endpoint_type == "censored":
             event_idx = 0
+        elif r.endpoint_type in CAUSE_TO_IDX:
+            event_idx = CAUSE_TO_IDX[r.endpoint_type]
         else:
-            event_idx = CAUSE_TO_IDX.get(r.endpoint_type, 0)
+            raise ValueError(
+                f"subject_id {sid}: unrecognized endpoint_type "
+                f"{r.endpoint_type!r} (expected 'censored' or one of {CAUSES})"
+            )
         d_idx = int(_discretize(np.array([dur]), time_edges)[0])
         out[sid] = (d_idx, event_idx)
     return out

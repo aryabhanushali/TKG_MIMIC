@@ -71,8 +71,9 @@ def _build_value_summary_features(
 ) -> tuple[np.ndarray, list[str]]:
     """Per-patient summary stats for every LAB_*, OMR_BP*, OMR_BMI* concept.
 
-    Returns a dense float32 array of shape (n_patients, n_concepts_with_values * 5)
-    and the column names. Missing -> 0 (sentinel; XGBoost handles natively).
+    Returns a dense float32 array of shape (n_patients, n_concepts_with_values * 6)
+    (mean, max, min, last, count, slope per concept) and the column names.
+    Missing -> 0 (sentinel; XGBoost handles natively).
     """
     if "value_num" not in events.columns:
         return np.zeros((len(patient_order), 0), dtype=np.float32), []

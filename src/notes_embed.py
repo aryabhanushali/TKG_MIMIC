@@ -1,7 +1,10 @@
 """Embed cohort discharge notes with Bio_ClinicalBERT.
 
-Uses the [CLS] token output (768-dim) as a per-note embedding.
-Embeddings get used in the TGN as event features for `hasNote` facts.
+Uses the [CLS] token output (768-dim) as a per-note embedding. These
+per-note embeddings are mean-pooled per patient by notes_aggregate.py; the
+resulting single vector is concatenated onto the patient's static-feature
+block in tgn_model.py -- there is no per-event `hasNote` fact or event-level
+timestamp for notes.
 
 Output:
   tkg_output/notes/note_embeddings.npy   -- (N, 768) float32

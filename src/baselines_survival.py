@@ -143,8 +143,12 @@ def run() -> None:
                 r["model"] = "cox"; all_rows.append(r)
             test_predictions[f"cox_risk_{cause}"] = cox_risk
             del X_tr_dense
-        except Exception as e:
-            print(f"    Cox failed: {e}")
+        except Exception:
+            import traceback
+            print(f"    Cox failed for cause={cause} -- cox_risk_{cause} column will be "
+                  f"MISSING from predictions_test.csv, and evaluate_stats.py will KeyError "
+                  f"on this cause unless it's also skipped there:")
+            traceback.print_exc()
 
         # survival:cox encodes durations as +t (event observed) and -t (censored).
         print("  fitting XGBoost (survival:cox)...", flush=True)
@@ -167,8 +171,13 @@ def run() -> None:
             for r in xgb_rows:
                 r["model"] = "xgb_surv"; all_rows.append(r)
             test_predictions[f"xgb_surv_risk_{cause}"] = xgb_risk
-        except Exception as e:
-            print(f"    XGBoost-survival failed: {e}")
+        except Exception:
+            import traceback
+            print(f"    XGBoost-survival failed for cause={cause} -- "
+                  f"xgb_surv_risk_{cause} column will be MISSING from "
+                  f"predictions_test.csv, and evaluate_stats.py will KeyError "
+                  f"on this cause unless it's also skipped there:")
+            traceback.print_exc()
 
     df = pd.DataFrame(all_rows)
     out_path = os.path.join(SURV_DIR, "test_metrics.csv")
