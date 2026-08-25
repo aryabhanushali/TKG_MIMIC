@@ -290,6 +290,12 @@ def _icu_facts(windows: pd.DataFrame) -> pd.DataFrame:
     icu = icu.rename(columns={"intime": "timestamp_start",
                               "outtime": "timestamp_end"})
     icu["value_num"] = icu["los"].astype(float)
+    # los is only fully known once the stay ends; if that's on/after the
+    # window close, using it would leak information not available at
+    # prediction time -- keep the stay as a fact (it started in-window) but
+    # suppress its value.
+    still_open_or_late = icu["timestamp_end"].isna() | (icu["timestamp_end"] >= icu["window_end"])
+    icu.loc[still_open_or_late, "value_num"] = np.nan
     out = icu[FACT_COLS]
     print(f"  ICU stay facts: {len(out):,}")
     return out
@@ -443,6 +449,11 @@ def _inputevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
     inp = inp.rename(columns={"starttime": "timestamp_start",
                               "endtime": "timestamp_end",
                               "amount": "value_num"})
+    # amount is the total for the whole infusion, only final at timestamp_end;
+    # if that's on/after the window close, suppress the value (same reasoning
+    # as ICU los above) rather than leak a not-yet-final total.
+    still_open_or_late = inp["timestamp_end"].isna() | (inp["timestamp_end"] >= inp["window_end"])
+    inp.loc[still_open_or_late, "value_num"] = np.nan
     out = inp[FACT_COLS]
     print(f"  IV input facts: {len(out):,}")
     return out

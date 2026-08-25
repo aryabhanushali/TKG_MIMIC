@@ -228,9 +228,6 @@ def build_cohort() -> pd.DataFrame:
     cohort = cohort.merge(n_admits, on="subject_id", how="left")
     cohort = cohort[cohort["n_admits"] >= 2]
     n_after_min_admits = len(cohort)
-    # Adult at index
-    cohort = cohort[cohort["age_at_index"] >= 18]
-    n_after_adult2 = len(cohort)
     # Drop patients without enough follow-up AND no endpoint
     has_ep = cohort["endpoint_type"].notna()
     enough_fu = cohort["follow_up_days"] >= MIN_FOLLOWUP_DAYS
@@ -238,7 +235,17 @@ def build_cohort() -> pd.DataFrame:
     n_after_fu = len(cohort)
 
     cohort["endpoint_type"] = cohort["endpoint_type"].fillna("censored")
-    cohort["had_icu_stay"] = cohort["subject_id"].isin(set(icu["subject_id"].unique()))
+    # had_icu_stay is a pre-index static feature fed to every model, so it must
+    # only reflect ICU stays that started before the index date -- an ICU stay
+    # during or after the qualifying admission would leak the outcome itself
+    # (acute MI/stroke/HF/AF/PAD admissions very often involve ICU care).
+    icu_pre_index = icu.merge(
+        cohort[["subject_id", "index_date"]], on="subject_id", how="inner"
+    )
+    icu_pre_index = icu_pre_index[icu_pre_index["intime"] < icu_pre_index["index_date"]]
+    cohort["had_icu_stay"] = cohort["subject_id"].isin(
+        set(icu_pre_index["subject_id"].unique())
+    )
     cohort["death_during_followup"] = (
         cohort["dod"].notna()
         & (cohort["dod"] >= cohort["index_date"])
@@ -275,8 +282,7 @@ def build_cohort() -> pd.DataFrame:
             ("Patients with >=1 admission at age >= 18", n_after_adult),
             ("Has cardiometabolic index dx (among adult admissions)", n_with_cm),
             ("No prevalent endpoint disease at/before index (washout)", n_after_no_prior_ep),
-            (">= 2 admissions (any age)", n_after_min_admits),
-            ("Adult (>=18) at the index admission itself", n_after_adult2),
+            (">= 2 adult admissions", n_after_min_admits),
             (f"Endpoint OR >= {MIN_FOLLOWUP_DAYS}d follow-up", n_after_fu),
         ],
         columns=["step", "n_patients"],

@@ -3,13 +3,15 @@
 Adds the rigor an IEEE submission needs, computed entirely from the already-saved
 per-patient test predictions (no retraining):
 
-  1. A CORRECTED competing-risks horizon evaluation. The in-pipeline metric labels
-     a patient positive iff (observed cause == c AND duration <= h), negative iff
-     (duration >= h), and DROPS everyone else -- which silently discards patients
-     who had a *competing* event before h. Here a competing event before h is
-     correctly counted as a NEGATIVE for cause c (the patient did not develop c by
-     h). Only patients administratively censored before h (status unknown) are
-     dropped (this part remains IPCW-free; see limitations).
+  1. The same corrected competing-risks horizon definition used everywhere else
+     in this pipeline (src.tgn_survival._per_cause_auroc_at_horizons,
+     src.baselines_survival._eval_horizon_auroc): positive iff (observed cause
+     == c AND duration <= h); negative iff (duration >= h) OR (duration < h AND
+     an observed COMPETING event); dropped only if administratively censored
+     before h (status unknown; this part remains IPCW-free, see limitations).
+     Recomputing it here (rather than trusting test_metrics.csv) keeps the
+     bootstrap CIs and DeLong tests below defined on exactly the same patient
+     set as the main results tables.
 
   2. Bootstrap 95% confidence intervals on every AUROC / AUPRC (resampling test
      patients, N_BOOT reps, percentile method).
@@ -114,13 +116,20 @@ def _labels_for(cause, h, evts, durs):
     """Return (y, mask) for cause c at horizon h under the corrected rule:
 
       positive : observed cause == c AND duration <= h
-      negative : duration > h (event-free past h)  OR
-                 (duration <= h AND an observed COMPETING event != censored)
-      dropped  : administratively censored with duration <= h (status unknown)
+      negative : duration >= h (event-free at/past h)  OR
+                 (duration < h AND an observed COMPETING event != censored)
+      dropped  : administratively censored with duration < h (status unknown)
+
+    Boundary convention (duration == h for a censored patient counts as
+    "survived to h", competing events use a strict "< h") matches
+    src.tgn_survival._per_cause_auroc_at_horizons and
+    src.baselines_survival._eval_horizon_auroc exactly, so this script's
+    bootstrap CIs / DeLong tests are computed on the same patient set as the
+    main results tables in test_metrics.csv.
     """
     is_pos = (evts == cause) & (durs <= h)
-    survived = durs > h
-    competing = (durs <= h) & (evts != cause) & (evts != "censored")
+    survived = durs >= h
+    competing = (durs < h) & (evts != cause) & (evts != "censored")
     is_neg = survived | competing
     mask = is_pos | is_neg
     y = is_pos[mask].astype(int)

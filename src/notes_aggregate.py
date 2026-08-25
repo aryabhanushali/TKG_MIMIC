@@ -2,9 +2,12 @@
 
 For each cohort patient, we mean-pool the [CLS] embeddings of all their
 discharge notes written **strictly before the index admission** (i.e.,
-charttime < index_date). This matches the prognostic-at-admit cutoff used
-for every other modality in `prep_modeling.py`, so no modality ever sees
-information from time points another does not. Patients without any prior
+charttime < index_date). Every other modality in `prep_modeling.py` uses an
+inclusive cutoff (relative_days <= 0, i.e. the index date itself is
+allowed); notes use a strictly-earlier cutoff instead, which only makes
+notes *more* conservative (same-day notes are excluded here but would be
+included for other modalities), so this is not a leakage risk -- just a
+narrower window than the rest of the pipeline. Patients without any prior
 discharge notes get a zero vector and a `has_notes = 0` indicator.
 
 Output:

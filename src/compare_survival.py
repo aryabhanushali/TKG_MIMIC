@@ -1,4 +1,4 @@
-"""Side-by-side: TGN-Survival vs Cox vs GBSA on per-cause AUROC at 1y/3y/5y."""
+"""Side-by-side: TKG-Transformer vs Cox vs XGBoost-Survival on per-cause AUROC at 1y/3y/5y."""
 import os
 import pandas as pd
 

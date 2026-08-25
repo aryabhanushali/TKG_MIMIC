@@ -1,4 +1,7 @@
-"""TGAT-style temporal attention model over patient pre-index event sequences."""
+"""Transformer over patient pre-index event sequences, using a TGAT-style
+(Bochner/time2vec) time encoding for each event's relative timestamp -- the
+architecture itself is a plain sequence Transformer with attention pooling,
+not TGAT's temporal-neighbor message-passing."""
 import os
 import time
 import numpy as np
@@ -259,12 +262,19 @@ def _prepare_data():
 
     for sid in labels["subject_id"]:
         if sid not in events_by_sid:
+            # A single UNK/no-value placeholder event, not a truly empty
+            # sequence: collate() marks a fully-empty row's attention mask as
+            # all-False, and a fully-masked row into nn.TransformerEncoder /
+            # MultiheadAttention produces NaN (softmax over all -inf scores),
+            # which would then poison the whole batch's loss via .mean().
+            # concept_idx=0 is UNK, value_present=0 marks "no value" -- this
+            # patient carries no real information either way.
             events_by_sid[sid] = (
-                np.zeros(0, dtype=np.int64),
-                np.zeros(0, dtype=np.int64),
-                np.zeros(0, dtype=np.float32),
-                np.zeros(0, dtype=np.float32),
-                np.zeros(0, dtype=np.float32),
+                np.zeros(1, dtype=np.int64),
+                np.zeros(1, dtype=np.int64),
+                np.zeros(1, dtype=np.float32),
+                np.zeros(1, dtype=np.float32),
+                np.zeros(1, dtype=np.float32),
             )
 
     # Static feature normalization uses training statistics only
