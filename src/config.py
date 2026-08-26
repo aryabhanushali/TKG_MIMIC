@@ -36,7 +36,19 @@ CARDIOMETA_ICD10 = {
     "Dyslipid":   ["E780", "E781", "E782", "E783", "E784",
                    "E785", "E786", "E787", "E788", "E789"],
     "Obesity":    ["E660", "E661", "E662", "E668", "E669"],
-    "MetSyn":     ["E881"],
+    # E88.81 = metabolic syndrome. NOTE: this was previously "E881" (=E88.1,
+    # "Lipodystrophy, not elsewhere classified" -- a wrong disease entity,
+    # not a typo in spirit) which matched 24 patients (16 in the final
+    # cohort) with lipodystrophy and matched zero true metabolic-syndrome
+    # patients, since "E8881".startswith("E881") is False. Verified against
+    # raw diagnoses_icd.csv.gz: E8881 matches 233 distinct patients (109 in
+    # the final cohort) vs. 24 for the old code. Net cohort-membership impact
+    # of the fix is tiny (1 patient drops, 5 patients newly qualify, out of
+    # 33,656) since nearly all metabolic-syndrome-coded patients already
+    # qualify via T2D/HTN/Dyslipid independently -- but 25 patients already
+    # in the cohort have their cardiometa_types/num_cardiometa_conditions
+    # feature value change, and 2 have their index_date itself change.
+    "MetSyn":     ["E8881"],
 }
 
 # Cardiometabolic index conditions (ICD-9)
@@ -65,9 +77,17 @@ ENDPOINTS_ICD10 = {
     # previously omitted, which both under-ascertained AF and leaked I48.91 in
     # as a pre-index "predictor").
     "AF":     ["I48"],
-    # I73.x peripheral vascular disease + I70.2x lower-extremity atherosclerosis
-    # (the common PAD code).
-    "PAD":    ["I730", "I731", "I738", "I739", "I702"],
+    # I73.8/I73.9 (other/unspecified peripheral vascular disease) + I70.2x
+    # (lower-extremity atherosclerosis, the common PAD code). I73.0 (Raynaud's
+    # syndrome) and I73.1 (Buerger's disease / thromboangiitis obliterans) are
+    # deliberately excluded: both are non-atherosclerotic peripheral vascular
+    # conditions, clinically distinct from the atherosclerotic PAD this
+    # endpoint is meant to capture (different pathophysiology, demographics,
+    # and management). Verified against the actual endpoint-defining
+    # admissions in the current cohort: only 2 of 302 PAD patients (0.7%)
+    # qualified via I73.0, 0 via I73.1 -- removing them is a correctness fix
+    # with a small, quantified effect on the PAD arm specifically (n=2 of 302).
+    "PAD":    ["I738", "I739", "I702"],
 }
 
 # Circulatory endpoints (ICD-9) -- incident acute events.
@@ -82,7 +102,10 @@ ENDPOINTS_ICD9 = {
     # 42731 = AF, 42732 = atrial flutter (ICD-10 I48 covers both; ICD-9 was
     # previously AF-only, an asymmetry vs. the ICD-10 definition).
     "AF":     ["42731", "42732"],
-    "PAD":    ["4402", "4430", "4431", "4432", "4433", "4434",
+    # 443.0 (Raynaud's) and 443.1 (Buerger's) excluded -- see the matching
+    # ICD-10 PAD note above; 0 current patients qualified via these two ICD-9
+    # codes anyway, so this is a correctness fix with zero observed impact.
+    "PAD":    ["4402", "4432", "4433", "4434",
                "4438", "4439"],
 }
 
