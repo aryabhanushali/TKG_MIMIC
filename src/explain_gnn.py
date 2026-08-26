@@ -34,6 +34,7 @@ from src.config import OUTPUT_DIR, FIGURES_DIR
 from src.tgn_model import _prepare_data, _set_seed, MAX_SEQ_LEN
 from src.tgn_survival import TKGSurvivalNet, CAUSES, NUM_CAUSES, NUM_TIME_BINS, MODEL_DIR
 from src.explain import _load_concept_remap_lookup
+from src.fidelity_stats import summarize_fidelity, print_fidelity_summary
 
 EXPLAIN_DIR = os.path.join(OUTPUT_DIR, "explain")
 
@@ -234,6 +235,14 @@ def run() -> None:
           f"  vs random = {fidelity['kl_drop_random'].mean():.4f}  "
           "(top should be HIGHER)")
     print(f"  mean learned mask density        = {fidelity['mean_mask'].mean():.3f}")
+
+    # Per-patient paired significance testing -- a mean alone can be driven by
+    # a handful of outlier patients; report win-rate + paired-t + Wilcoxon so
+    # "the important set beats random" is a claim about a typical patient,
+    # not just the average one. See src/fidelity_stats.py.
+    fidelity_summary = summarize_fidelity(fidelity)
+    fidelity_summary.to_csv(os.path.join(EXPLAIN_DIR, "gnn_explainer_fidelity_stats.csv"))
+    print_fidelity_summary(fidelity_summary, "Plain TKG-Transformer")
 
     fig, axes = plt.subplots(1, 5, figsize=(22, 8))
     for ax, cause in zip(axes, CAUSES):

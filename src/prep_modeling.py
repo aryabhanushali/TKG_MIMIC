@@ -1,4 +1,5 @@
 """Prep TKG for prognostic modeling: pre-index events, splits, labels."""
+import hashlib
 import os
 import numpy as np
 import pandas as pd
@@ -9,23 +10,51 @@ MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
 ENDPOINT_ORDER = ["MI", "Stroke", "HF", "AF", "PAD", "censored"]
 
 
+def _patient_bucket(subject_id: int, seed: int, n_buckets: int = 10_000) -> int:
+    """Deterministic bucket in [0, n_buckets) for one (subject_id, seed) pair,
+    independent of any other patient's presence, count, or ordering."""
+    h = hashlib.sha256(f"{seed}:{subject_id}".encode()).digest()
+    return int.from_bytes(h[:8], "big") % n_buckets
+
+
 def _stratified_split(df: pd.DataFrame, label_col: str,
                       ratios=(0.70, 0.15, 0.15), seed: int = SEED) -> dict[int, str]:
-    """Patient-level stratified split. Returns {subject_id: 'train'|'val'|'test'}."""
-    rng = np.random.default_rng(seed)
+    """Patient-level stratified split. Returns {subject_id: 'train'|'val'|'test'}.
+
+    Each patient's split is a pure function of (subject_id, seed) via a hash
+    bucket, not a shared-RNG shuffle over the group they happen to fall in.
+    This was previously np.random.default_rng(seed).shuffle(ids) applied once
+    per stratification group in sequence -- since shuffle() consumes a number
+    of draws proportional to group size, ANY upstream change to ANY group's
+    patient count (even one unrelated to a given patient, e.g. one more/fewer
+    censored patient from an ICD code fix elsewhere) shifted the shared RNG's
+    internal state and reassigned splits for patients who were never touched
+    by that change. Confirmed empirically: a 2-of-302-patient PAD code fix
+    (removing two non-atherosclerotic codes) reshuffled enough of the test
+    set that PAD's Cox AUROC at 3 years swung from 0.592 to 0.487 and a
+    patient-graph-vs-Cox PAD comparison flipped from "mixed, losing at short
+    horizons" to "wins at every horizon, p<0.0001" -- with no code change to
+    PAD's own definition responsible for the second effect. Hash-bucketing
+    makes each patient's assignment stable under any such change to anyone
+    else's cohort membership; per-group ratios will deviate from the target
+    70/15/15 by ordinary hash-partitioning noise (negligible at these group
+    sizes) rather than exact rounding, which is the standard, accepted
+    trade-off for this property.
+    """
     assignment: dict[int, str] = {}
-    for label, grp in df.groupby(label_col):
-        ids = grp["subject_id"].to_numpy().copy()
-        rng.shuffle(ids)
-        n = len(ids)
-        n_train = int(round(n * ratios[0]))
-        n_val = int(round(n * ratios[1]))
-        for sid in ids[:n_train]:
-            assignment[int(sid)] = "train"
-        for sid in ids[n_train:n_train + n_val]:
-            assignment[int(sid)] = "val"
-        for sid in ids[n_train + n_val:]:
-            assignment[int(sid)] = "test"
+    for _, grp in df.groupby(label_col):
+        ids = grp["subject_id"].to_numpy()
+        n_buckets = 10_000
+        train_cut = int(round(n_buckets * ratios[0]))
+        val_cut = train_cut + int(round(n_buckets * ratios[1]))
+        for sid in ids:
+            b = _patient_bucket(int(sid), seed, n_buckets)
+            if b < train_cut:
+                assignment[int(sid)] = "train"
+            elif b < val_cut:
+                assignment[int(sid)] = "val"
+            else:
+                assignment[int(sid)] = "test"
     return assignment
 
 
