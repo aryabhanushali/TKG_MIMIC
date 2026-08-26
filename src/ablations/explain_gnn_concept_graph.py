@@ -24,6 +24,7 @@ from src.tgn_model import _set_seed, MAX_SEQ_LEN
 from src.tgn_survival import CAUSES, NUM_CAUSES, NUM_TIME_BINS
 from src.explain_gnn import _patient_tensors, _cif_probs, _fidelity_row, KEEP_FRAC, GNN_EPOCHS, GNN_LR, MAX_PATIENTS_PER_CAUSE
 from src.ablations.hetero_gnn import HeteroSurvivalNet, HeteroTKGFull, _prepare_hetero_survival_data
+from src.fidelity_stats import summarize_fidelity, print_fidelity_summary
 
 EXPLAIN_DIR = os.path.join(OUTPUT_DIR, "explain")
 MODEL_DIR = os.path.join(OUTPUT_DIR, "hetero_gnn_survival")
@@ -125,6 +126,11 @@ def run() -> None:
           f"  vs random = {fidelity['kl_keep_random'].mean():.4f}  (top should be LOWER)")
     print(f"  comprehens.  KL(drop top-{pct}%)  = {fidelity['kl_drop_top'].mean():.4f}"
           f"  vs random = {fidelity['kl_drop_random'].mean():.4f}  (top should be HIGHER)")
+
+    fidelity_summary = summarize_fidelity(fidelity)
+    fidelity_summary.to_csv(os.path.join(EXPLAIN_DIR, "gnn_explainer_fidelity_concept_graph_stats.csv"))
+    print_fidelity_summary(fidelity_summary, "Concept-graph model (attempt 1)")
+
     print(f"\nSaved: {fid_path}")
 
 

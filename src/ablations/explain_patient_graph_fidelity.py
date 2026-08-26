@@ -32,6 +32,7 @@ import torch.nn.functional as F
 from src.config import OUTPUT_DIR
 from src.tgn_survival import CAUSES, NUM_CAUSES, NUM_TIME_BINS, _make_time_bins, _discretize
 from src.ablations.patient_graph_gnn import PatientConceptGNN, _prepare_patient_graph_data
+from src.fidelity_stats import summarize_fidelity, print_fidelity_summary
 
 EXPLAIN_DIR = os.path.join(OUTPUT_DIR, "explain")
 MODEL_DIR = os.path.join(OUTPUT_DIR, "patient_gnn_survival")
@@ -181,6 +182,17 @@ def run() -> None:
           f"  vs random = {fidelity['kl_keep_random'].mean():.4f}  (top should be LOWER)")
     print(f"  comprehens.  KL(drop top-{pct}%)  = {fidelity['kl_drop_top'].mean():.4f}"
           f"  vs random = {fidelity['kl_drop_random'].mean():.4f}  (top should be HIGHER)")
+
+    # The raw KL magnitudes here are ~1000x smaller than the other two
+    # models' (one patient's own edges are a tiny fraction of a multi-million-
+    # edge shared graph), so a mean comparison alone risks looking "decisive"
+    # from a handful of large-KL patients even if a typical patient shows no
+    # reliable effect. Win-rate + Wilcoxon (not just the paired t-test) is the
+    # right way to check that -- see src/fidelity_stats.py.
+    fidelity_summary = summarize_fidelity(fidelity)
+    fidelity_summary.to_csv(os.path.join(EXPLAIN_DIR, "patient_graph_fidelity_stats.csv"))
+    print_fidelity_summary(fidelity_summary, "Patient-graph model (attempt 2)")
+
     print(f"\nSaved: {fid_path}")
 
 
