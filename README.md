@@ -9,7 +9,7 @@ Part 2: understand how this was built, what was tried, and how the bugs were fou
 
 ---
 
-# Part 1 — Where things stand
+# Part 1 — Currently
 
 ## The question
 
