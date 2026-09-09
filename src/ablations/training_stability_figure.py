@@ -15,10 +15,8 @@ from src.config import OUTPUT_DIR, FIGURES_DIR
 from src.tgn_survival import MIN_EPOCHS
 
 RUNS = [
-    ("tgn_survival", "Plain TKG-Transformer (sequence only)", "#1f77b4"),
-    ("hetero_gnn_survival", "Concept graph, kept sequence (attempt 1, full)", "#d62728"),
-    ("static_gnn_survival", "Concept graph, dropped sequence (attempt 1, static)", "#ff7f0e"),
-    ("patient_gnn_survival", "Patient graph (attempt 2)", "#2ca02c"),
+    ("tgn_survival", "TKG-Transformer (sequence only)", "#1f77b4"),
+    ("patient_gnn_survival", "Patient-graph model", "#2ca02c"),
 ]
 
 

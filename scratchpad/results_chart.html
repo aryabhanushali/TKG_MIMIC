@@ -1,0 +1,280 @@
+<title>CardioMM-TKG Results</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-cox:      #2a78d6;
+    --series-xgb:      #eb6834;
+    --series-tkg:      #1baf7a;
+    --series-pg:       #eda100;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-cox:      #3987e5;
+      --series-xgb:      #d95926;
+      --series-tkg:      #199e70;
+      --series-pg:       #c98500;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-cox:      #3987e5;
+    --series-xgb:      #d95926;
+    --series-tkg:      #199e70;
+    --series-pg:       #c98500;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .viz-root {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 32px 20px 64px;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 650; margin: 0 0 6px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 4px; line-height: 1.5; max-width: 760px; }
+  .note { color: var(--text-muted); font-size: 12.5px; margin: 0 0 24px; }
+
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); }
+  .legend-item { display: flex; align-items: center; gap: 7px; }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+
+  .view-toggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .view-toggle button {
+    font-family: inherit; font-size: 13px; padding: 7px 14px; border: none; background: var(--surface-1);
+    color: var(--text-secondary); cursor: pointer;
+  }
+  .view-toggle button.active { background: var(--series-cox); color: #fff; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  @media (max-width: 860px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 14px 10px;
+  }
+  .panel h2 { font-size: 14px; font-weight: 650; margin: 0 0 2px; }
+  .panel .n { font-size: 11.5px; color: var(--text-muted); margin: 0 0 8px; }
+  .panel svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+  .bar { rx: 4px; }
+  .axis-label { font-size: 9.5px; fill: var(--text-muted); font-family: inherit; }
+  .baseline-label { font-size: 9px; fill: var(--text-muted); font-family: inherit; }
+
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 50;
+    background: var(--text-primary); color: var(--surface-1);
+    font-size: 12px; padding: 6px 9px; border-radius: 6px;
+    line-height: 1.45; opacity: 0; transition: opacity 80ms ease; white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  }
+  .tooltip.show { opacity: 1; }
+  .tooltip b { font-weight: 650; }
+
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.data-table caption { text-align: left; font-size: 12px; color: var(--text-muted); padding-bottom: 8px; }
+  table.data-table th, table.data-table td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  table.data-table th:first-child, table.data-table td:first-child { text-align: left; font-variant-numeric: normal; }
+  table.data-table thead th { color: var(--text-secondary); font-weight: 600; font-size: 12px; }
+  table.data-table tbody tr:hover { background: var(--page); }
+  .table-wrap { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; overflow-x: auto; }
+</style>
+
+<div class="viz-root">
+  <div class="wrap">
+    <h1>Model comparison: AUROC by disease and time horizon</h1>
+    <p class="subtitle">Final, stable-split results (Section 8.1 / 8.6). AUROC ranges 0.5 (random guess) to 1.0 (perfect ranking) — bars are drawn from the 0.5 baseline so the meaningful differences are visible.</p>
+    <p class="note">Patient-graph model bars are the mean of 5 seeds; other models are the single canonical run. PAD has the fewest events of any disease — read its bars with extra caution.</p>
+
+    <div class="toolbar">
+      <div class="legend" id="legend"></div>
+      <div class="view-toggle">
+        <button id="btn-chart" class="active">Chart</button>
+        <button id="btn-table">Table</button>
+      </div>
+    </div>
+
+    <div class="grid" id="chart-view"></div>
+    <div class="table-wrap" id="table-view" style="display:none;"></div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const MODELS = [
+  { key: "cox", label: "Cox regression", color: "var(--series-cox)" },
+  { key: "xgb", label: "XGBoost", color: "var(--series-xgb)" },
+  { key: "tkg", label: "TKG-Transformer", color: "var(--series-tkg)" },
+  { key: "pg",  label: "Patient-graph model", color: "var(--series-pg)" },
+];
+const HORIZONS = [
+  { key: "1y", label: "1 yr" },
+  { key: "3y", label: "3 yr" },
+  { key: "5y", label: "5 yr" },
+];
+// AUROC, final stable-split run (README Section 8.1 for cox/xgb/tkg; Section 6.3/8.6 5-seed mean for pg)
+const DATA = {
+  "Heart attack (MI)": {
+    cox: [0.662, 0.673, 0.648], xgb: [0.687, 0.689, 0.673],
+    tkg: [0.663, 0.656, 0.639], pg:  [0.693, 0.674, 0.676],
+  },
+  "Stroke": {
+    cox: [0.769, 0.736, 0.694], xgb: [0.675, 0.695, 0.721],
+    tkg: [0.624, 0.656, 0.595], pg:  [0.679, 0.724, 0.717],
+  },
+  "Heart failure (HF)": {
+    cox: [0.644, 0.615, 0.643], xgb: [0.733, 0.706, 0.709],
+    tkg: [0.673, 0.663, 0.649], pg:  [0.620, 0.624, 0.662],
+  },
+  "Atrial fibrillation (AF)": {
+    cox: [0.766, 0.649, 0.652], xgb: [0.771, 0.654, 0.659],
+    tkg: [0.723, 0.673, 0.634], pg:  [0.737, 0.655, 0.653],
+  },
+  "Peripheral artery disease (PAD)": {
+    cox: [0.543, 0.566, 0.569], xgb: [0.675, 0.677, 0.701],
+    tkg: [0.622, 0.645, 0.694], pg:  [0.706, 0.659, 0.683],
+  },
+};
+
+const legend = document.getElementById("legend");
+MODELS.forEach(m => {
+  const item = document.createElement("div");
+  item.className = "legend-item";
+  item.innerHTML = `<span class="swatch" style="background:${m.color}"></span>${m.label}`;
+  legend.appendChild(item);
+});
+
+const YMIN = 0.5, YMAX = 0.82;
+const W = 320, H = 210;
+const padL = 30, padR = 8, padT = 10, padB = 24;
+const plotW = W - padL - padR, plotH = H - padT - padB;
+
+function yToPx(v) {
+  const t = (v - YMIN) / (YMAX - YMIN);
+  return padT + plotH * (1 - t);
+}
+
+function buildPanel(disease, values) {
+  const groupW = plotW / HORIZONS.length;
+  const barGap = 2;
+  const barW = Math.min(16, (groupW - 10) / MODELS.length - barGap);
+
+  let bars = "";
+  HORIZONS.forEach((h, hi) => {
+    const groupX = padL + hi * groupW + (groupW - (barW + barGap) * MODELS.length) / 2;
+    MODELS.forEach((m, mi) => {
+      const v = values[m.key][hi];
+      const x = groupX + mi * (barW + barGap);
+      const yTop = yToPx(v);
+      const yBase = yToPx(YMIN);
+      const barH = yBase - yTop;
+      bars += `<rect class="bar" data-disease="${disease}" data-model="${m.label}" data-horizon="${h.label}" data-value="${v.toFixed(3)}"
+        x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(barH,0).toFixed(1)}"
+        rx="4" fill="${m.color}" style="cursor:pointer;"></rect>`;
+    });
+  });
+
+  let axisLabels = "";
+  HORIZONS.forEach((h, hi) => {
+    const groupX = padL + hi * groupW + groupW / 2;
+    axisLabels += `<text class="axis-label" x="${groupX}" y="${H - 6}" text-anchor="middle">${h.label}</text>`;
+  });
+
+  const baseY = yToPx(0.5);
+  const gridLines = [0.5, 0.6, 0.7, 0.8].map(v => {
+    const y = yToPx(v);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>
+            <text class="axis-label" x="${padL - 5}" y="${y + 3}" text-anchor="end">${v.toFixed(1)}</text>`;
+  }).join("");
+
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="AUROC by horizon for ${disease}">
+    ${gridLines}
+    <line x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" stroke="var(--baseline)" stroke-width="1.5"/>
+    ${bars}
+    ${axisLabels}
+  </svg>`;
+}
+
+const chartView = document.getElementById("chart-view");
+Object.entries(DATA).forEach(([disease, values]) => {
+  const panel = document.createElement("div");
+  panel.className = "panel";
+  const nPatients = { "Heart attack (MI)": 918, "Stroke": 710, "Heart failure (HF)": 751,
+                       "Atrial fibrillation (AF)": 682, "Peripheral artery disease (PAD)": 302 }[disease];
+  panel.innerHTML = `<h2>${disease}</h2><p class="n">${nPatients.toLocaleString()} patients</p>${buildPanel(disease, values)}`;
+  chartView.appendChild(panel);
+});
+
+// Tooltip
+const tooltip = document.getElementById("tooltip");
+document.querySelectorAll(".bar").forEach(bar => {
+  bar.addEventListener("mousemove", (e) => {
+    const { disease, model, horizon, value } = bar.dataset;
+    tooltip.innerHTML = `<b>${model}</b><br>${disease}, ${horizon}<br>AUROC ${value}`;
+    tooltip.style.left = (e.clientX + 14) + "px";
+    tooltip.style.top = (e.clientY + 14) + "px";
+    tooltip.classList.add("show");
+  });
+  bar.addEventListener("mouseleave", () => tooltip.classList.remove("show"));
+});
+
+// Table view
+const tableView = document.getElementById("table-view");
+let tableHTML = `<table class="data-table"><caption>AUROC by disease, model, and time horizon (final, stable-split run)</caption>
+  <thead><tr><th>Disease</th><th>Model</th><th>1 yr</th><th>3 yr</th><th>5 yr</th></tr></thead><tbody>`;
+Object.entries(DATA).forEach(([disease, values]) => {
+  MODELS.forEach((m, mi) => {
+    tableHTML += `<tr><td>${mi === 0 ? disease : ""}</td><td>${m.label}</td>` +
+      values[m.key].map(v => `<td>${v.toFixed(3)}</td>`).join("") + `</tr>`;
+  });
+});
+tableHTML += `</tbody></table>`;
+tableView.innerHTML = tableHTML;
+
+document.getElementById("btn-chart").addEventListener("click", () => {
+  chartView.style.display = "grid"; tableView.style.display = "none";
+  document.getElementById("btn-chart").classList.add("active");
+  document.getElementById("btn-table").classList.remove("active");
+});
+document.getElementById("btn-table").addEventListener("click", () => {
+  chartView.style.display = "none"; tableView.style.display = "block";
+  document.getElementById("btn-table").classList.add("active");
+  document.getElementById("btn-chart").classList.remove("active");
+});
+</script>
