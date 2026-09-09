@@ -1,18 +1,14 @@
-"""Follow-up to patient_graph_gnn_sweep.py: that script's coordinate-wise
-sweep found that combining each axis's individually-best value produced a
-WORSE, less stable model than the defaults (val AUROC collapsed on 2 of 5
-final seeds) -- evidence that these hyperparameters interact, so a greedy
-per-axis combination doesn't work. This script runs a bounded RANDOM search
-over the JOINT space instead (still not exhaustive -- true Bayesian
+"""Hyperparameter tuning for the patient-graph GNN: a bounded RANDOM search
+over the JOINT hyperparameter space (not exhaustive -- true Bayesian
 optimization or a full grid would cost far more compute than this project's
-hardware supports in reasonable time -- but a genuine step beyond "vary one
-knob at a time").
+hardware supports in reasonable time -- but a genuine step beyond varying
+one knob at a time, which was tried first and found to produce a WORSE,
+less stable model than the defaults when the single best value from each
+axis was combined -- evidence these hyperparameters interact).
 
-Search space capped below the most expensive extremes explored in the
-coordinate-wise sweep (d_model<=256, n_layers<=3) specifically because those
-combinations were the slowest and, combined, were the ones that destabilized
-training -- deliberately searching the region actually reachable in this
-project's compute budget, not the theoretical maximum.
+Search space capped at d_model<=256, n_layers<=3 -- deliberately searching
+the region actually reachable in this project's compute budget, not the
+theoretical maximum.
 
 Selection: validation mean AUROC @ 3y, seed 42 only for screening (matches
 every other selection rule in this study). The single best joint config is
@@ -31,10 +27,107 @@ import torch
 import torch.nn.functional as F
 
 from src.config import OUTPUT_DIR
-from src.ablations.patient_graph_gnn import _prepare_patient_graph_data
-from src.ablations.patient_graph_gnn_sweep import _train_one, DEFAULTS
+from src.tgn_model import WEIGHT_DECAY, EPOCHS, PATIENCE, _set_seed
+from src.tgn_survival import (
+    NUM_CAUSES, NUM_TIME_BINS, HORIZON_DAYS, MIN_EPOCHS,
+    _make_time_bins, _deephit_nll_per_sample, _prepare_survival_targets,
+    _per_cause_auroc_at_horizons,
+)
+from src.ablations.patient_graph_gnn import PatientConceptGNN, _prepare_patient_graph_data
 
 SWEEP_DIR = os.path.join(OUTPUT_DIR, "sweeps")
+DEFAULTS = dict(d_model=128, n_layers=2, num_bases=4, dropout=0.15, lr=1e-3)
+
+
+def _train_one(d, config, seed=42, verbose=False):
+    """Train PatientConceptGNN with the given hyperparameters; return
+    (best_val_mean_auroc_3y, best_epoch, best_state_dict, time_edges, model, device)."""
+    _set_seed(seed)
+    labels_df = d["labels_df"]
+    pid_to_pos = d["pid_to_pos"]
+    train_sids = d["splits"]["train"]
+    train_durations = labels_df.loc[
+        labels_df["subject_id"].isin(train_sids), "time_to_event_days"
+    ].to_numpy(dtype=np.float32)
+    time_edges = _make_time_bins(train_durations, NUM_TIME_BINS)
+    survival_targets = _prepare_survival_targets(labels_df, time_edges)
+
+    n_patients = d["n_patients"]
+    event_idx_all = np.zeros(n_patients, dtype=np.int64)
+    duration_idx_all = np.zeros(n_patients, dtype=np.int64)
+    for sid, (dur_idx, evt_idx) in survival_targets.items():
+        pos = pid_to_pos[sid]
+        event_idx_all[pos] = evt_idx
+        duration_idx_all[pos] = dur_idx
+
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    model = PatientConceptGNN(
+        n_concepts=d["n_concepts"], n_patients=d["n_patients"], n_static=d["n_static"],
+        n_relations=d["n_relations"], edge_index=d["edge_index"], edge_type=d["edge_type"],
+        n_classes=NUM_CAUSES * NUM_TIME_BINS,
+        d_model=config["d_model"], n_layers=config["n_layers"],
+        num_bases=config["num_bases"], dropout=config["dropout"],
+    ).to(device)
+
+    static_all = d["static_arr"].to(device)
+    train_pos = np.array([pid_to_pos[s] for s in train_sids])
+    val_pos = np.array([pid_to_pos[s] for s in d["splits"]["val"]])
+
+    train_event_idx = torch.tensor(event_idx_all[train_pos], dtype=torch.long, device=device)
+    train_dur_idx = torch.tensor(duration_idx_all[train_pos], dtype=torch.long, device=device)
+    train_pos_t = torch.tensor(train_pos, dtype=torch.long, device=device)
+
+    counts = np.bincount(event_idx_all[train_pos], minlength=NUM_CAUSES + 1).astype(float)
+    weights = np.ones_like(counts)
+    weights[1:] = (counts.sum() / (NUM_CAUSES * counts[1:].clip(min=1)))
+    weights = weights / weights.mean()
+    sample_weight_by_event = torch.tensor(weights, dtype=torch.float32, device=device)
+
+    def weighted_deephit_nll(logits_flat, dur_idx, evt_idx):
+        logits = logits_flat.view(-1, NUM_CAUSES, NUM_TIME_BINS)
+        per_sample = _deephit_nll_per_sample(logits, dur_idx, evt_idx)
+        w = sample_weight_by_event[evt_idx]
+        return (per_sample * w).mean()
+
+    def _cif_for(logits_flat, positions):
+        logits = logits_flat[positions].view(-1, NUM_CAUSES, NUM_TIME_BINS)
+        probs = F.softmax(logits.reshape(logits.size(0), -1), dim=-1).view_as(logits)
+        return torch.cumsum(probs, dim=-1).detach().cpu().numpy()
+
+    optim = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=WEIGHT_DECAY)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=EPOCHS)
+
+    best_metric, best_epoch, no_improve, best_state = -1.0, -1, 0, None
+    for epoch in range(1, EPOCHS + 1):
+        model.train()
+        optim.zero_grad()
+        logits_flat = model(static_all)
+        loss = weighted_deephit_nll(logits_flat[train_pos_t], train_dur_idx, train_event_idx)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optim.step()
+        scheduler.step()
+
+        model.eval()
+        with torch.no_grad():
+            logits_flat_eval = model(static_all)
+            cif_val = _cif_for(logits_flat_eval, val_pos)
+        val_sids = np.array(d["splits"]["val"])
+        val_metrics = _per_cause_auroc_at_horizons(cif_val, val_sids, labels_df, time_edges, HORIZON_DAYS)
+        mean3y = float(val_metrics[val_metrics["horizon_days"] == 1095]["auroc"].mean(skipna=True))
+        if verbose:
+            print(f"    ep {epoch:02d} val_mean_AUROC@3y={mean3y:.4f}")
+        if epoch < MIN_EPOCHS:
+            continue
+        if mean3y > best_metric:
+            best_metric, best_epoch, no_improve = mean3y, epoch, 0
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        else:
+            no_improve += 1
+            if no_improve >= PATIENCE:
+                break
+
+    return best_metric, best_epoch, best_state, time_edges, model, device
 
 # Capped below the most expensive coordinate-wise extremes (d_model=384,
 # n_layers=4) -- those were both the slowest to train AND, combined, the

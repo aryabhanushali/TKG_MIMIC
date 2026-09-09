@@ -33,7 +33,9 @@ from src.tgn_model import (
 # read as THE reported model. Other seeds (via TKG_SEED env var), used only
 # for multi-seed mean+/-std robustness reporting, write to their own
 # tgn_survival_seed{N}/ so they never overwrite the canonical run.
-MODEL_DIR = os.path.join(OUTPUT_DIR, "tgn_survival" if SEED == 42 else f"tgn_survival_seed{SEED}")
+MODEL_DIR = os.path.join(
+    OUTPUT_DIR,
+    "tgn_survival" if SEED == 42 else f"tgn_survival_seed{SEED}")
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
 
 # All 5 seeds (42-46) early-stopped with "best epoch" = 1 or 2 by val mean

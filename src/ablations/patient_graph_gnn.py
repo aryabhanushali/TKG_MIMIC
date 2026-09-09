@@ -1,11 +1,8 @@
 """A genuinely patient-in-the-graph GNN: patients are real nodes, connected
 to other patients only through shared concepts, updated by real multi-hop
-message passing. This is the thing hetero_gnn.py never actually tested --
-that file only ever enriched CONCEPT embeddings with graph structure; every
-patient was still a flat, structurally-isolated sequence with zero
-connection to any other patient. A sequence model cannot do what this can:
-let one patient's prediction be informed by patterns learned from OTHER
-patients who share their concepts, multiple hops away.
+message passing. A sequence model cannot do what this can: let one
+patient's prediction be informed by patterns learned from OTHER patients
+who share their concepts, multiple hops away.
 
 Graph:
   - Concept nodes (train-restricted vocabulary + UNK, same convention as
@@ -56,27 +53,15 @@ from src.tgn_survival import (
 )
 
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
-_dirname = "patient_gnn_survival" if os.environ.get("PATIENT_GNN_TIMING", "1").lower() not in ("0", "false", "no") \
-    else "patient_gnn_survival_notiming"
+_dirname = "patient_gnn_survival"
 MODEL_DIR = os.path.join(OUTPUT_DIR, _dirname if SEED == 42 else f"{_dirname}_seed{SEED}")
 
 RECENCY_BINS = [90, 730]   # days before index: <=90 "recent", 90-730 "mid", >730 "old"
 N_RGCN_LAYERS = 2   # 2 hops: patient -> concept -> patient reaches a same-concept neighbor
 
-# 2x2 ablation (patient-nodes x timing information): with PATIENT_GNN_TIMING=0,
-# every patient-concept edge collapses to a single relation regardless of
-# when the event occurred, isolating whether the model's advantage comes
-# from patient-to-patient connectivity alone or needs the residual recency
-# signal on top of it. Everything else (architecture, co-occurrence edges,
-# ontology edges, training procedure) is identical to the timing-on run.
-USE_TIMING = os.environ.get("PATIENT_GNN_TIMING", "1").lower() not in ("0", "false", "no")
-
 
 def _recency_bucket(days_before_index: np.ndarray) -> np.ndarray:
-    """days_before_index >= 0 (0 = right at index date). Returns 0/1/2,
-    or always 0 if USE_TIMING is disabled (single relation, no timing)."""
-    if not USE_TIMING:
-        return np.zeros_like(days_before_index, dtype=np.int64)
+    """days_before_index >= 0 (0 = right at index date). Returns 0/1/2."""
     b = np.zeros_like(days_before_index, dtype=np.int64)
     b[(days_before_index > RECENCY_BINS[0]) & (days_before_index <= RECENCY_BINS[1])] = 1
     b[days_before_index > RECENCY_BINS[1]] = 2

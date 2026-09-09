@@ -1,30 +1,18 @@
-"""Hyperparameter sweep for the patient-graph GNN (src/ablations/
-patient_graph_gnn.py), to answer a specific question raised in review: is
-this model's mediocre showing (Section 6.3, 8.6) because the architecture
-doesn't fit the problem, or because nothing about it was ever tuned?
+"""Same hyperparameter sweep as patient_graph_gnn_sweep.py, but selecting
+on class-1 recall / F1 instead of AUROC. See xgb_survival_sweep_recall_f1.py
+for why recall alone is a degenerate selection criterion at this
+prevalence (0.4%-5.2%) -- confirmed the same way here before falling back
+to F1. Per-epoch model selection during training still uses validation
+mean AUROC@3y (unchanged, to keep the two sweeps' epoch-selection logic
+identical and comparable); only the SWEEP's cross-config selection
+criterion changes to F1.
 
-Coordinate-wise sweep from the shipped defaults (d_model=128, n_layers=2,
-num_bases=4, dropout=0.15, lr=1e-3) across one axis at a time -- cheaper and
-more diagnostic than a full grid, since the question is "does turning this
-knob help at all," not "find the global optimum." Screening uses seed 42
-only (this architecture trains in ~1-2 minutes, so this is still fast); the
-single best value per axis is then combined into one config and re-run
-across all 5 standard seeds (42-46) for a result directly comparable to the
-rest of this study's multi-seed tables.
+Reuses the exact same coordinate-wise candidate grid as
+patient_graph_gnn_sweep.py.
 
-Selection metric: validation mean AUROC at the 3-year horizon -- the exact
-same metric already used for this model's own epoch-level checkpoint
-selection (src/ablations/patient_graph_gnn.py), so no new selection
-criterion is introduced and no test-set information is ever touched during
-the sweep. Only the final, single best-combined config's TEST result is
-reported, once, at the end -- same discipline as every other model in this
-study (Section 11).
-
-Output: tkg_output/sweeps/patient_graph_gnn_sweep.csv (screening results)
-        tkg_output/sweeps/patient_graph_gnn_best/test_metrics.csv (final,
-        best-combined config, 5-seed test result)
+Output: tkg_output/sweeps/patient_graph_gnn_sweep_recall_f1.csv (screening)
+        tkg_output/sweeps/patient_graph_gnn_recall_f1_best/test_metrics.csv (final, 5-seed)
 """
-import copy
 import os
 import time
 
@@ -33,19 +21,19 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-from src.config import OUTPUT_DIR, SEED
-from src.tgn_model import LR as DEFAULT_LR, WEIGHT_DECAY, EPOCHS, PATIENCE, _set_seed
+from src.config import OUTPUT_DIR
+from src.tgn_model import WEIGHT_DECAY, EPOCHS, PATIENCE, _set_seed
 from src.tgn_survival import (
     CAUSES, NUM_CAUSES, NUM_TIME_BINS, HORIZON_DAYS, MIN_EPOCHS,
     _make_time_bins, _deephit_nll_per_sample, _prepare_survival_targets,
     _per_cause_auroc_at_horizons,
 )
 from src.ablations.patient_graph_gnn import PatientConceptGNN, _prepare_patient_graph_data
+from src.ablations.threshold_metrics import best_threshold_metrics
 
 SWEEP_DIR = os.path.join(OUTPUT_DIR, "sweeps")
 DEFAULTS = dict(d_model=128, n_layers=2, num_bases=4, dropout=0.15, lr=1e-3)
 
-# One axis varied at a time; every other value held at DEFAULTS.
 AXES = {
     "d_model":  [64, 128, 256, 384],
     "n_layers": [1, 2, 3, 4],
@@ -55,9 +43,42 @@ AXES = {
 }
 
 
+def _labels_for(cause, h, evts, durs):
+    is_pos = (evts == cause) & (durs <= h)
+    survived = durs >= h
+    competing = (durs < h) & (evts != cause) & (evts != "censored")
+    is_neg = survived | competing
+    mask = is_pos | is_neg
+    y = is_pos[mask].astype(int)
+    return y, mask
+
+
+def _recall_f1_at_horizon(cif, sids, labels_df, time_edges, h) -> tuple:
+    """Mean (max_recall, best_f1) across the 5 causes at horizon h, from a
+    (n, n_causes, n_time_bins) CIF array -- mirrors _per_cause_auroc_at_horizons's
+    binning but scores threshold-based metrics instead of AUROC."""
+    sub = labels_df[labels_df["subject_id"].isin(sids)].set_index("subject_id").loc[sids]
+    evts = sub["endpoint_type"].to_numpy()
+    durs = sub["time_to_event_days"].to_numpy(dtype=float)
+    bin_idx = int(np.searchsorted(time_edges, h, side="right") - 1)
+    bin_idx = max(0, min(bin_idx, cif.shape[-1] - 1))
+    recalls, f1s = [], []
+    for i, cause in enumerate(CAUSES):
+        y, mask = _labels_for(cause, h, evts, durs)
+        s = cif[:, i, bin_idx][mask]
+        m = best_threshold_metrics(y, s)
+        if not np.isnan(m["max_recall"]):
+            recalls.append(m["max_recall"])
+            f1s.append(m["best_f1"])
+    return (float(np.mean(recalls)) if recalls else float("nan"),
+            float(np.mean(f1s)) if f1s else float("nan"))
+
+
 def _train_one(d, config, seed=42, verbose=False):
-    """Train PatientConceptGNN with the given hyperparameters; return
-    (best_val_mean_auroc_3y, best_epoch, best_state_dict)."""
+    """Train PatientConceptGNN with the given hyperparameters. Per-epoch
+    checkpoint selection uses validation mean AUROC@3y, unchanged from
+    patient_graph_gnn_sweep.py -- returns the best checkpoint plus that
+    checkpoint's val recall/F1 for the sweep's own (different) selection."""
     _set_seed(seed)
     labels_df = d["labels_df"]
     pid_to_pos = d["pid_to_pos"]
@@ -88,6 +109,7 @@ def _train_one(d, config, seed=42, verbose=False):
     static_all = d["static_arr"].to(device)
     train_pos = np.array([pid_to_pos[s] for s in train_sids])
     val_pos = np.array([pid_to_pos[s] for s in d["splits"]["val"]])
+    val_sids = np.array(d["splits"]["val"])
 
     train_event_idx = torch.tensor(event_idx_all[train_pos], dtype=torch.long, device=device)
     train_dur_idx = torch.tensor(duration_idx_all[train_pos], dtype=torch.long, device=device)
@@ -128,7 +150,6 @@ def _train_one(d, config, seed=42, verbose=False):
         with torch.no_grad():
             logits_flat_eval = model(static_all)
             cif_val = _cif_for(logits_flat_eval, val_pos)
-        val_sids = np.array(d["splits"]["val"])
         val_metrics = _per_cause_auroc_at_horizons(cif_val, val_sids, labels_df, time_edges, HORIZON_DAYS)
         mean3y = float(val_metrics[val_metrics["horizon_days"] == 1095]["auroc"].mean(skipna=True))
         if verbose:
@@ -143,7 +164,14 @@ def _train_one(d, config, seed=42, verbose=False):
             if no_improve >= PATIENCE:
                 break
 
-    return best_metric, best_epoch, best_state, time_edges, model, device
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    model.eval()
+    with torch.no_grad():
+        cif_val_best = _cif_for(model(static_all), val_pos)
+    val_recall, val_f1 = _recall_f1_at_horizon(cif_val_best, val_sids, labels_df, time_edges, 1095)
+
+    return best_metric, best_epoch, best_state, time_edges, model, device, val_recall, val_f1
 
 
 def run_screening() -> pd.DataFrame:
@@ -164,58 +192,54 @@ def run_screening() -> pd.DataFrame:
             seen.add(key)
             configs.append((f"{axis}={v}", cfg))
 
-    print(f"\nScreening {len(configs)} configs (seed=42, val-only selection)...\n")
+    print(f"\nScreening {len(configs)} configs (seed=42, val-only selection, recall/F1 @ 3y)...\n")
     for name, cfg in configs:
         t0 = time.time()
-        best_metric, best_epoch, _, _, _, _ = _train_one(d, cfg, seed=42)
+        best_auroc, best_epoch, _, _, _, _, val_recall, val_f1 = _train_one(d, cfg, seed=42)
         dt = time.time() - t0
         print(f"  {name:16s} d_model={cfg['d_model']:4d} n_layers={cfg['n_layers']} "
               f"num_bases={cfg['num_bases']:2d} dropout={cfg['dropout']:.2f} lr={cfg['lr']:.4f}  "
-              f"-> val_mean_AUROC@3y={best_metric:.4f} (best ep {best_epoch}, {dt:.1f}s)")
-        rows.append(dict(name=name, **cfg, val_mean_auroc_3y=best_metric, best_epoch=best_epoch, seconds=dt))
+              f"-> val_mean_recall@3y={val_recall:.4f} val_mean_best_f1@3y={val_f1:.4f} "
+              f"(checkpoint ep {best_epoch}, val_AUROC@3y={best_auroc:.4f}, {dt:.1f}s)")
+        rows.append(dict(name=name, **cfg, val_mean_recall_3y=val_recall, val_mean_best_f1_3y=val_f1,
+                          val_mean_auroc_3y=best_auroc, best_epoch=best_epoch, seconds=dt))
 
     result = pd.DataFrame(rows)
-    out_path = os.path.join(SWEEP_DIR, "patient_graph_gnn_sweep.csv")
+    out_path = os.path.join(SWEEP_DIR, "patient_graph_gnn_sweep_recall_f1.csv")
     result.to_csv(out_path, index=False)
     print(f"\nSaved: {out_path}")
+
+    recall_spread = result["val_mean_recall_3y"].max() - result["val_mean_recall_3y"].min()
+    print(f"\nRecall spread across all {len(result)} configs: {recall_spread:.4f} "
+          f"({'confirmed degenerate -- selecting on F1 instead' if recall_spread < 0.01 else 'not degenerate, selecting on recall'})")
     return result
 
 
-def best_combined_config(result: pd.DataFrame) -> dict:
-    """Per axis, pick the value with the highest val_mean_auroc_3y among rows
-    that vary only that axis (baseline included in every axis's comparison
-    pool); combine into one config."""
+def best_combined_config(result: pd.DataFrame, select_col: str) -> dict:
     best = dict(DEFAULTS)
-    # int/float axes must stay native Python types, not numpy scalars --
-    # PyG's RGCNConv does an isinstance(x, int) check internally that
-    # silently fails (IndexError, not a clean TypeError) on np.int64/float64
-    # pulled out of a pandas row via .loc/.iloc.
     axis_caster = {"d_model": int, "n_layers": int, "num_bases": int,
                    "dropout": float, "lr": float}
-    baseline_score = result.loc[result["name"] == "baseline", "val_mean_auroc_3y"].iloc[0]
-    print(f"\nBaseline val_mean_AUROC@3y = {baseline_score:.4f}")
+    baseline_score = result.loc[result["name"] == "baseline", select_col].iloc[0]
+    print(f"\nBaseline {select_col} = {baseline_score:.4f}")
     for axis in AXES:
         pool = result[result["name"].str.startswith(f"{axis}=") | (result["name"] == "baseline")]
-        top = pool.loc[pool["val_mean_auroc_3y"].idxmax()]
+        top = pool.loc[pool[select_col].idxmax()]
         best[axis] = axis_caster[axis](top[axis])
-        print(f"  best {axis}: {best[axis]} (val_mean_AUROC@3y={top['val_mean_auroc_3y']:.4f}, "
-              f"{'improves' if top['val_mean_auroc_3y'] > baseline_score else 'no improvement'} over baseline)")
+        print(f"  best {axis}: {best[axis]} ({select_col}={top[select_col]:.4f}, "
+              f"{'improves' if top[select_col] > baseline_score else 'no improvement'} over baseline)")
     return best
 
 
 def run_final(best_cfg: dict) -> None:
-    """Retrain the best-combined config across the standard 5 seeds and
-    evaluate on TEST -- once, at the very end, same discipline as every
-    other model in this study."""
-    print(f"\nFinal best-combined config: {best_cfg}")
-    out_dir = os.path.join(SWEEP_DIR, "patient_graph_gnn_best")
+    print(f"\nFinal best-combined config (selected by F1): {best_cfg}")
+    out_dir = os.path.join(SWEEP_DIR, "patient_graph_gnn_recall_f1_best")
     os.makedirs(out_dir, exist_ok=True)
 
     all_rows = []
     for seed in [42, 43, 44, 45, 46]:
         print(f"\n=== seed {seed} ===")
         d = _prepare_patient_graph_data()
-        best_metric, best_epoch, best_state, time_edges, model, device = _train_one(d, best_cfg, seed=seed)
+        best_auroc, best_epoch, best_state, time_edges, model, device, _, _ = _train_one(d, best_cfg, seed=seed)
         if best_state is not None:
             model.load_state_dict(best_state)
         model.eval()
@@ -227,20 +251,32 @@ def run_final(best_cfg: dict) -> None:
             probs = F.softmax(logits.reshape(logits.size(0), -1), dim=-1).view_as(logits)
             cif_test = torch.cumsum(probs, dim=-1).detach().cpu().numpy()
         test_sids = np.array(d["splits"]["test"])
-        test_metrics = _per_cause_auroc_at_horizons(cif_test, test_sids, d["labels_df"], time_edges, HORIZON_DAYS)
-        test_metrics["seed"] = seed
-        all_rows.append(test_metrics)
-        print(f"  seed {seed}: best val_mean_AUROC@3y={best_metric:.4f} (epoch {best_epoch})")
 
-    result = pd.concat(all_rows, ignore_index=True)
+        for h in HORIZON_DAYS:
+            sub = d["labels_df"][d["labels_df"]["subject_id"].isin(test_sids)].set_index("subject_id").loc[test_sids]
+            evts = sub["endpoint_type"].to_numpy()
+            durs = sub["time_to_event_days"].to_numpy(dtype=float)
+            bin_idx = int(np.searchsorted(time_edges, h, side="right") - 1)
+            bin_idx = max(0, min(bin_idx, cif_test.shape[-1] - 1))
+            for i, cause in enumerate(CAUSES):
+                y, mask = _labels_for(cause, h, evts, durs)
+                s = cif_test[:, i, bin_idx][mask]
+                m = best_threshold_metrics(y, s)
+                all_rows.append(dict(seed=seed, cause=cause, horizon_days=h,
+                                      model="patient_graph_recall_f1_tuned", **m))
+        print(f"  seed {seed}: best val_AUROC@3y={best_auroc:.4f} (epoch {best_epoch})")
+
+    result = pd.DataFrame(all_rows)
     out_path = os.path.join(out_dir, "test_metrics.csv")
     result.to_csv(out_path, index=False)
-    print(f"\n=== TUNED PATIENT-GRAPH GNN, 5-SEED TEST AUROC @ 3y ===")
-    print(result[result.horizon_days == 1095].groupby("cause")["auroc"].agg(["mean", "std"]).round(4))
+    print(f"\n=== TUNED-FOR-F1 PATIENT-GRAPH GNN, 5-SEED TEST BEST-F1 @ 3y ===")
+    print(result[result.horizon_days == 1095].groupby("cause")["best_f1"].agg(["mean", "std"]).round(4))
     print(f"\nSaved: {out_path}")
 
 
 if __name__ == "__main__":
     screening = run_screening()
-    best_cfg = best_combined_config(screening)
+    recall_spread = screening["val_mean_recall_3y"].max() - screening["val_mean_recall_3y"].min()
+    select_col = "val_mean_recall_3y" if recall_spread >= 0.01 else "val_mean_best_f1_3y"
+    best_cfg = best_combined_config(screening, select_col)
     run_final(best_cfg)

@@ -1,10 +1,18 @@
-"""Survival baselines: elastic-net Cox and XGBoost-Survival.
+"""Survival baselines: elastic-net Cox and XGBoost-Survival, both tuned.
 
 Both models consume the same feature space as baseline.py: bag-of-codes over
 train-observed concepts, per-concept value summaries (mean/max/min/last/count/
 slope), and static features. One cause-specific model is fit per endpoint, with
 events of other causes treated as censored at their occurrence time
 (cause-specific framing).
+
+Cox's regularization strength is a per-cause elastic-net alpha, selected by a
+validation-scored 100-point regularization path (see
+src/ablations/cox_regularization_sweep.py for the full search); XGBoost's
+hyperparameters are a coordinate-wise search result (see
+src/ablations/xgb_survival_sweep.py). Both are hardcoded below as the final,
+selected settings -- re-run either sweep script to re-derive them from
+scratch on validation data only.
 """
 import os
 import numpy as np
@@ -31,6 +39,13 @@ MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
 SURV_DIR = os.path.join(OUTPUT_DIR, "baselines_survival" if SEED == 42 else f"baselines_survival_seed{SEED}")
 CAUSES = ["MI", "Stroke", "HF", "AF", "PAD"]
 HORIZON_DAYS = [365, 1095, 1825]   # match tgn_survival
+
+# Selected by cox_regularization_sweep.py (validation-scored regularization path).
+COX_ALPHA = {"MI": 0.001401, "Stroke": 0.000663, "HF": 0.000421, "AF": 0.000575, "PAD": 0.000083}
+COX_L1_RATIO = 0.9
+
+# Selected by xgb_survival_sweep.py (coordinate-wise validation search).
+XGB_CONFIG = dict(n_estimators=100, learning_rate=0.02, max_depth=3, subsample=1.0, colsample_bytree=0.5)
 
 
 def _load():
@@ -128,16 +143,17 @@ def run() -> None:
         y_tr = _make_y(labels_tr, cause)
         y_te = _make_y(labels_te, cause)
 
-        # Single-alpha elastic-net Cox (skips the default 5-alpha path search).
-        print("  fitting CoxNet (single-alpha elastic-net Cox)...", flush=True)
-        cox = CoxnetSurvivalAnalysis(
-            l1_ratio=0.9, alphas=[0.01],
-            max_iter=80, tol=1e-3,
-        )
+        # Tuned elastic-net Cox: full regularization path down to (and warm-started
+        # through) the validation-selected alpha for this cause -- fitting directly
+        # at a single, very small alpha without the path skips the warm start and
+        # can fail to converge (see cox_regularization_sweep.py / the significance
+        # scripts for why this matters, especially for PAD's small alpha).
+        print(f"  fitting CoxNet (tuned alpha={COX_ALPHA[cause]})...", flush=True)
+        cox = CoxnetSurvivalAnalysis(l1_ratio=COX_L1_RATIO, n_alphas=100, max_iter=2000, tol=1e-7)
         try:
             X_tr_dense = X_tr.toarray()
             cox.fit(X_tr_dense, y_tr)
-            cox_risk = cox.predict(X_te.toarray()).ravel()
+            cox_risk = cox.predict(X_te.toarray(), alpha=COX_ALPHA[cause]).ravel()
             cox_rows = _eval_horizon_auroc(cox_risk, labels_te, cause, HORIZON_DAYS)
             for r in cox_rows:
                 r["model"] = "cox"; all_rows.append(r)
@@ -161,9 +177,8 @@ def run() -> None:
             xgb_clf = xgb.XGBRegressor(
                 objective="survival:cox",
                 eval_metric="cox-nloglik",
-                n_estimators=250, learning_rate=0.08, max_depth=6,
-                subsample=0.85, colsample_bytree=0.7,
                 tree_method="hist", n_jobs=-1, random_state=SEED,
+                **XGB_CONFIG,
             )
             xgb_clf.fit(X_tr, y_xgb)
             xgb_risk = xgb_clf.predict(X_te)

@@ -290,54 +290,7 @@ def _prepare_data():
         static_norm.to_numpy(dtype=np.float32),
     ))
 
-    # Append per-patient discharge-note BioBERT embedding to static block.
-    # Controlled EXPLICITLY by env var TKG_USE_NOTES (not silently inferred from
-    # file presence), so the strict (structured-only) and multimodal variants
-    # are reproducible and unambiguous:
-    #   TKG_USE_NOTES=0  -> strict, structured-only (no note block at all)
-    #   TKG_USE_NOTES=1  -> multimodal (default; requires the note artifacts)
-    use_notes = os.environ.get("TKG_USE_NOTES", "1").lower() not in ("0", "false", "no")
-    notes_emb_path = os.path.join(OUTPUT_DIR, "notes", "patient_note_emb.npy")
-    notes_csv_path = os.path.join(OUTPUT_DIR, "notes", "patient_note_emb.csv")
     n_static_total = len(static_cols)
-    if not use_notes:
-        print(f"  TKG_USE_NOTES=0 -> strict structured-only; n_static = {n_static_total}")
-    elif os.path.exists(notes_emb_path) and os.path.exists(notes_csv_path):
-        notes_emb = np.load(notes_emb_path).astype(np.float32)
-        notes_meta = pd.read_csv(notes_csv_path)
-        sid_to_note_row = {int(sid): i for i, sid
-                            in enumerate(notes_meta["subject_id"])}
-        has_notes_arr = notes_meta["has_notes"].to_numpy(dtype=np.float32)
-        train_rows = [sid_to_note_row[int(s)] for s in train_ids
-                       if int(s) in sid_to_note_row]
-        if train_rows:
-            train_emb = notes_emb[train_rows]
-            emb_mu = train_emb.mean(axis=0)
-            emb_sd = train_emb.std(axis=0)
-            emb_sd[emb_sd == 0] = 1.0
-            notes_emb_z = ((notes_emb - emb_mu) / emb_sd).astype(np.float32)
-        else:
-            notes_emb_z = notes_emb
-        note_dim = notes_emb_z.shape[1]
-        for sid, vec in list(static_arr_by_sid.items()):
-            row = sid_to_note_row.get(int(sid))
-            if row is not None:
-                note_vec = notes_emb_z[row]
-                hn = float(has_notes_arr[row])
-            else:
-                note_vec = np.zeros(note_dim, dtype=np.float32)
-                hn = 0.0
-            static_arr_by_sid[sid] = np.concatenate(
-                [vec, np.array([hn], dtype=np.float32), note_vec]
-            ).astype(np.float32)
-        n_static_total += 1 + note_dim
-        n_with = int(has_notes_arr.sum())
-        print(f"  multimodal: appended has_notes + {note_dim}-d BioBERT to static; "
-              f"{n_with:,} patients with notes "
-              f"({n_with / max(len(notes_meta), 1) * 100:.1f}%); "
-              f"n_static = {n_static_total}")
-    else:
-        print(f"  notes not found at {notes_emb_path}; running structured-only")
 
     label_by_sid = dict(zip(labels["subject_id"],
                               labels["endpoint_type"].map(EP_TO_IDX)))
