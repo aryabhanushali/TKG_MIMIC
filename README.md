@@ -2,7 +2,18 @@
 
 **Can a patient's medical history predict which circulatory disease they'll develop next — and does turning that history into a connected knowledge graph help, compared to standard approaches?**
 
+<<<<<<< HEAD
 This project builds a benchmark from MIMIC-IV hospital records and tests that question with four models: tuned Cox regression, tuned XGBoost, a sequence-based transformer that reads a patient's history as an ordered timeline, and a graph neural network that makes patients themselves nodes in a shared graph. This document describes the final, current state of the codebase and its results.
+=======
+This project builds a benchmark from MIMIC-IV hospital records and tests that question with five different models, including two graph neural networks. It also documents, in detail, three real bugs found and fixed along the way because one of them changed the study's main conclusion.
+
+Part 1: current, correct numbers and conclusions
+Part 2: understand how this was built, what was tried, and how the bugs were found
+
+---
+
+# Part 1 — Currently
+>>>>>>> 58977ca1870c78bd8a6d0d685a09764d873a7e69
 
 ## The question
 
