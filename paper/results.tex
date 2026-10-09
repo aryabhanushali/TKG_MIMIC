@@ -1,0 +1,100 @@
+\section{Results}
+
+\subsection{Discrimination Across Models}
+\label{sec:results-auroc}
+
+The table below summarizes test-set AUROC across the five target diseases and three prediction horizons. Cox regression is reported from a single deterministic fit, while XGBoost, the TKG-Transformer, and the patient-graph GNN are reported as mean $\pm$ standard deviation across five random seeds.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Test-set AUROC by disease and prediction horizon. Cox is reported from a single deterministic fit; XGBoost (XGB), TKG-Transformer (TKG-T), and patient-graph GNN (PG-GNN) are reported as five-seed mean $\pm$ SD.}
+\label{tab:auroc}
+\begin{tabular}{llcccc}
+\hline
+Disease & Horizon & Cox & XGB & TKG-T & PG-GNN \\
+\hline
+MI     & 1y & 0.752 & 0.747 $\pm$ 0.003 & 0.689 $\pm$ 0.024 & 0.679 $\pm$ 0.016 \\
+MI     & 3y & 0.740 & 0.732 $\pm$ 0.001 & 0.661 $\pm$ 0.015 & 0.674 $\pm$ 0.018 \\
+MI     & 5y & 0.713 & 0.706 $\pm$ 0.002 & 0.645 $\pm$ 0.016 & 0.676 $\pm$ 0.013 \\
+Stroke & 1y & 0.772 & 0.764 $\pm$ 0.008 & 0.645 $\pm$ 0.081 & 0.678 $\pm$ 0.008 \\
+Stroke & 3y & 0.763 & 0.756 $\pm$ 0.004 & 0.682 $\pm$ 0.052 & 0.724 $\pm$ 0.005 \\
+Stroke & 5y & 0.734 & 0.725 $\pm$ 0.003 & 0.650 $\pm$ 0.054 & 0.717 $\pm$ 0.007 \\
+HF     & 1y & 0.717 & 0.749 $\pm$ 0.004 & 0.671 $\pm$ 0.033 & 0.620 $\pm$ 0.016 \\
+HF     & 3y & 0.695 & 0.720 $\pm$ 0.004 & 0.636 $\pm$ 0.017 & 0.624 $\pm$ 0.009 \\
+HF     & 5y & 0.701 & 0.711 $\pm$ 0.003 & 0.655 $\pm$ 0.009 & 0.662 $\pm$ 0.010 \\
+AF     & 1y & 0.810 & 0.829 $\pm$ 0.008 & 0.703 $\pm$ 0.058 & 0.737 $\pm$ 0.029 \\
+AF     & 3y & 0.696 & 0.687 $\pm$ 0.005 & 0.627 $\pm$ 0.030 & 0.655 $\pm$ 0.010 \\
+AF     & 5y & 0.681 & 0.689 $\pm$ 0.004 & 0.618 $\pm$ 0.022 & 0.653 $\pm$ 0.005 \\
+PAD    & 1y & 0.624 & 0.707 $\pm$ 0.007 & 0.619 $\pm$ 0.033 & 0.706 $\pm$ 0.009 \\
+PAD    & 3y & 0.646 & 0.703 $\pm$ 0.009 & 0.639 $\pm$ 0.027 & 0.659 $\pm$ 0.002 \\
+PAD    & 5y & 0.666 & 0.718 $\pm$ 0.007 & 0.660 $\pm$ 0.024 & 0.683 $\pm$ 0.008 \\
+\hline
+\end{tabular}
+\end{table}
+
+Cox and XGBoost achieved similar discrimination across the 15 disease-horizon combinations. Paired DeLong tests found no significant difference between the two models in any combination ($p=0.228$--$0.903$). The TKG-Transformer and patient-graph GNN generally achieved lower AUROC than the two fixed-feature baselines.
+
+\subsection{Statistical Comparison of Models}
+\label{sec:results-comparisons}
+
+The patient-graph GNN had significantly lower AUROC than XGBoost in 11 of the 15 disease-horizon combinations after Bonferroni correction, including all three heart failure horizons. Heart failure was also the disease with the lowest average patient-graph GNN AUROC across horizons. At the 3-year heart failure horizon, a nearest-neighbor baseline with no learned parameters achieved an AUROC of 0.657, compared with 0.624 for the patient-graph GNN.
+
+Against Cox regression, five disease-horizon combinations met the predefined robustness criteria: MI at 1 and 3 years, heart failure at 1 and 3 years, and stroke at 1 year. In all five cases, Cox achieved higher AUROC.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Patient-graph GNN vs.\ Cox comparisons meeting the predefined robustness criteria.}
+\label{tab:robust-cox}
+\begin{tabular}{lll}
+\hline
+Disease & Horizon(s) & Direction \\
+\hline
+MI     & 1y, 3y & Cox higher AUROC \\
+HF     & 1y, 3y & Cox higher AUROC \\
+Stroke & 1y     & Cox higher AUROC \\
+\hline
+\end{tabular}
+\end{table}
+
+For peripheral artery disease, the patient-graph GNN achieved higher AUROC than Cox across all five seeds at each prediction horizon. However, none of the corresponding paired DeLong tests were significant. The one-sample $t$-test was significant, whereas the DeLong criterion was not met. PAD therefore showed a consistent direction across training seeds but did not satisfy the predefined robustness criteria.
+
+The TKG-Transformer differed significantly from Cox in 4 of the 15 disease-horizon combinations under the Bonferroni-corrected one-sample $t$-test. Only MI at 3 and 5 years also met the paired DeLong criterion in at least four of five seeds and therefore satisfied the predefined robustness criteria. In both cases, Cox achieved higher AUROC. Against XGBoost, the Bonferroni-corrected comparison between the two five-seed distributions was significant in 4 of 15 disease-horizon combinations.
+
+\subsection{Multiple-Comparison Sensitivity Analysis}
+
+We additionally evaluated whether the statistical conclusions changed when multiple-comparison correction was applied across the combined set of 60 comparisons involving the TKG-Transformer and patient-graph GNN against Cox and XGBoost. When correction was applied separately within each model's comparison family, 29 of 60 comparisons were significant. Applying a single Bonferroni correction across all 60 reduced this to 25, while the Benjamini--Hochberg false-discovery-rate procedure identified 55 significant comparisons.
+
+\subsection{Performance by Pre-Index History Density}
+\label{sec:results-history}
+
+We examined whether the patient-graph GNN's performance relative to Cox varied with the amount of available pre-index clinical history. Using the training-set median number of pre-index facts as the cutoff, test patients were divided into \emph{thin} and \emph{rich} history groups. For each disease, horizon, and patient-graph GNN seed, we calculated the difference in AUROC between the patient-graph GNN and Cox within each group.
+
+The thin-history group had a larger patient-graph GNN--Cox AUROC difference in at least four of five seeds for 12 of the 15 disease-horizon combinations (sign test, $p=0.035$). The strongest pattern occurred for PAD at 1 year, where the mean AUROC difference was $+0.134$ in the thin-history group compared with $+0.045$ in the rich-history group, with the pattern observed in all five seeds. The pattern was not observed for PAD at 3 years (0 of 5 seeds), PAD at 5 years (2 of 5 seeds), or heart failure at 5 years (1 of 5 seeds).
+
+Some subgroup comparisons contained only 8--19 positive cases. These findings therefore indicate an association between pre-index history density and relative model performance, rather than establishing message passing as the cause of the observed differences.
+
+\subsection{F1 and AUPRC}
+\label{sec:results-f1}
+
+Target-event prevalence ranged from 0.4\% to 5.2\% across the 15 disease-horizon combinations. Using the F1-specific configurations selected on the validation set, paired bootstrap comparisons found no significant difference in best-achievable F1 between the patient-graph GNN and either Cox or XGBoost in any of the 30 comparisons. In contrast, the one-sample $t$-test across the five patient-graph GNN seeds identified significant differences in 11 of 15 comparisons with Cox and 10 of 15 comparisons with XGBoost.
+
+Mean AUPRC across the 15 disease-horizon combinations was 0.068 for Cox, 0.072 for XGBoost, and 0.047 for the patient-graph GNN. The bootstrapped 95\% confidence intervals overlapped between the three models in every disease-horizon combination.
+
+\subsection{Explanation Fidelity}
+\label{sec:results-fidelity}
+
+For comprehensiveness, a larger divergence for the identified facts is the favorable direction. Both models showed significant differences between the identified and random feature sets. The TKG-Transformer had a mean KL-divergence difference of $+0.303$ and a win rate of 74.0\% (95\% CI: 67.3--81.3\%), with significance under both the paired $t$-test ($p=2.6\times10^{-4}$) and Wilcoxon signed-rank test ($p=8.5\times10^{-11}$). The patient-graph GNN had a mean difference of $+0.00103$ and a win rate of 84.0\% (95\% CI: 78.0--90.0\%), with both tests also significant ($p=9.5\times10^{-18}$ and $p=8.5\times10^{-21}$, respectively).
+
+For sufficiency, a smaller (negative) divergence for the identified facts is the favorable direction. The TKG-Transformer had a mean difference of $-0.089$ (favorable), win rate 57.3\% (95\% CI: 49.3--65.3\%). The paired $t$-test was not significant ($p=0.053$), whereas the Wilcoxon test was significant ($p=0.018$). The patient-graph GNN had a mean difference of $-0.00034$, favorable on average, but its win rate was 46.7\% (95\% CI: 38.7--54.7\%), below half. The paired $t$-test was significant ($p=0.0016$), whereas the Wilcoxon test was not ($p=0.427$). For the patient-graph GNN, the mean-level result and the per-patient result therefore disagree: the average across all 150 patients favors the identified facts, but the identified facts were on the favorable side of the random set for fewer than half of individual patients, and the rank-based test found no significant difference. Overall, both models showed stronger and more consistent evidence of explanation fidelity under comprehensiveness than under sufficiency.
+
+\subsection{Calibration}
+\label{sec:results-calibration}
+
+For the TKG-Transformer, Brier scores across the five diseases ranged from 0.0156 to 0.0251, compared with 0.0148 to 0.0247 for the patient-graph GNN. For Cox and XGBoost, the observed event rate did not increase monotonically across predicted-risk deciles for any of the five diseases. However, some disease-horizon deciles contained only single-digit numbers of observed events, limiting the precision of these calibration estimates.
+
+\subsection{Fairness and Subgroup Analysis}
+\label{sec:results-fairness}
+
+Subgroup AUROC was evaluated by sex, age tertile, and self-reported race/ethnicity for all four models. Several subgroups contained few positive cases, limiting the reliability of subgroup comparisons. For example, the middle age tertile contained 948 patients but only 11 positive stroke cases, with AUROC ranging from 0.464 to 0.605 across the four models. Race and ethnicity subgroups were similarly sparse, with many categories containing single-digit or no positive cases for individual diseases. These subgroup estimates should therefore be interpreted cautiously.
