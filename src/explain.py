@@ -206,8 +206,7 @@ def run_explain() -> None:
 
     emb_to_concept, emb_to_facttype = _load_concept_remap_lookup(labels_df)
 
-    device = (torch.device("mps") if torch.backends.mps.is_available()
-              else torch.device("cuda") if torch.cuda.is_available()
+    device = (torch.device("cuda") if torch.cuda.is_available()
               else torch.device("cpu"))
     model = TKGSurvivalNet(
         n_concepts=n_concepts, n_edge_types=n_edge_types, n_static=n_static,

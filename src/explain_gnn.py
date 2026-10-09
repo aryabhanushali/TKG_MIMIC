@@ -145,8 +145,11 @@ def run() -> None:
      splits, n_concepts, n_edge_types, n_static, labels_df) = _prepare_data()
     emb_to_concept, emb_to_facttype = _load_concept_remap_lookup(labels_df)
 
-    device = (torch.device("mps") if torch.backends.mps.is_available()
-              else torch.device("cuda") if torch.cuda.is_available()
+    # Forced to CPU (not MPS): see the comment in tgn_survival.py -- each
+    # patient's sequence length differs, and MPS's per-shape graph cache
+    # filled this machine's disk during GNNExplainer's ~100-forward-pass-
+    # per-patient loop when this was tried with MPS.
+    device = (torch.device("cuda") if torch.cuda.is_available()
               else torch.device("cpu"))
     surv = TKGSurvivalNet(n_concepts=n_concepts, n_edge_types=n_edge_types,
                           n_static=n_static).to(device)

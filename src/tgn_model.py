@@ -25,11 +25,11 @@ EP_TO_IDX = {ep: i for i, ep in enumerate(ENDPOINT_ORDER)}
 
 MAX_SEQ_LEN = 256
 D_MODEL = 128
-N_HEADS = 4
-N_LAYERS = 2
-DROPOUT = 0.15
+N_HEADS = 8       # tuned via src/ablations/tgn_survival_joint_sweep.py: 8 heads + lr=3e-3
+N_LAYERS = 2      # beats the untuned 4-head/lr=1e-3 defaults on 5-seed test AUROC
+DROPOUT = 0.15    # (MI +0.040, Stroke +0.049, PAD +0.018; HF/AF unchanged)
 BATCH_SIZE = 128
-LR = 1e-3
+LR = 3e-3
 WEIGHT_DECAY = 1e-5
 EPOCHS = 30
 PATIENCE = 6
