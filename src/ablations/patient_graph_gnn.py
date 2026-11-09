@@ -45,7 +45,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import RGCNConv
 
 from src.config import OUTPUT_DIR, FIGURES_DIR, SEED, read_events_table
-from src.tgn_model import D_MODEL, N_LAYERS, DROPOUT, LR, WEIGHT_DECAY, EPOCHS, PATIENCE, _set_seed
+from src.tgn_model import D_MODEL, N_LAYERS, DROPOUT, WEIGHT_DECAY, EPOCHS, PATIENCE, _set_seed
 from src.tgn_survival import (
     CAUSES, NUM_CAUSES, NUM_TIME_BINS, HORIZON_DAYS, MIN_EPOCHS,
     _make_time_bins, _discretize, _deephit_nll_per_sample,
@@ -58,6 +58,7 @@ MODEL_DIR = os.path.join(OUTPUT_DIR, _dirname if SEED == 42 else f"{_dirname}_se
 
 RECENCY_BINS = [90, 730]   # days before index: <=90 "recent", 90-730 "mid", >730 "old"
 N_RGCN_LAYERS = 2   # 2 hops: patient -> concept -> patient reaches a same-concept neighbor
+PG_LR = 1e-3        # kept at 1e-3 so this model's results don't move with the TKG-Transformer's LR
 
 
 def _recency_bucket(days_before_index: np.ndarray) -> np.ndarray:
@@ -322,7 +323,7 @@ def train_and_eval() -> None:
         probs = F.softmax(logits.reshape(logits.size(0), -1), dim=-1).view_as(logits)
         return torch.cumsum(probs, dim=-1).detach().cpu().numpy()
 
-    optim = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    optim = torch.optim.AdamW(model.parameters(), lr=PG_LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=EPOCHS)
 
     best_metric, best_epoch, no_improve = -1.0, -1, 0

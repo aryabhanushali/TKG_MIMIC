@@ -268,9 +268,13 @@ def train_and_eval() -> None:
     val_loader   = _make_loader(splits["val"],   shuffle=False)
     test_loader  = _make_loader(splits["test"],  shuffle=False)
 
+    # Forced to CPU: collate() pads each batch to that batch's own max
+    # length rather than a fixed size, so training sees many distinct
+    # sequence shapes. PyTorch's MPS backend compiles and caches a graph
+    # file per unique shape, which filled this machine's disk mid-run
+    # during hyperparameter search (src/ablations/tgn_survival_joint_sweep.py).
     device = torch.device(
-        "mps" if torch.backends.mps.is_available()
-        else ("cuda" if torch.cuda.is_available() else "cpu")
+        "cuda" if torch.cuda.is_available() else "cpu"
     )
     print(f"  device: {device}")
 

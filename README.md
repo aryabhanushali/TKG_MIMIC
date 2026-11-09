@@ -47,25 +47,27 @@ One exception, worth naming precisely: the patient-graph model's patients are no
 
 ## Results
 
-**AUROC, all four models, seed 42 (5-seed means for TGN-Transformer and the patient-graph model differ by at most ~0.03 from these):**
+**AUROC, all four models. Cox is a single deterministic fit; XGBoost, the TKG-Transformer, and the patient-graph model are five-seed means (seeds 42-46):**
 
 | Disease | Horizon | Cox | XGBoost | TKG-Transformer | Patient-graph |
 |---|---|---|---|---|---|
-| MI | 1y | 0.752 | 0.743 | 0.684 | 0.692 |
-| MI | 3y | 0.740 | 0.732 | 0.647 | 0.670 |
-| MI | 5y | 0.713 | 0.706 | 0.625 | 0.670 |
-| Stroke | 1y | 0.772 | 0.775 | 0.525 | 0.681 |
-| Stroke | 3y | 0.763 | 0.758 | 0.601 | 0.722 |
-| Stroke | 5y | 0.734 | 0.727 | 0.562 | 0.713 |
-| HF | 1y | 0.717 | 0.750 | 0.662 | 0.647 |
-| HF | 3y | 0.695 | 0.721 | 0.634 | 0.637 |
-| HF | 5y | 0.701 | 0.711 | 0.644 | 0.673 |
-| AF | 1y | 0.810 | 0.823 | 0.671 | 0.760 |
-| AF | 3y | 0.696 | 0.686 | 0.640 | 0.663 |
-| AF | 5y | 0.681 | 0.686 | 0.598 | 0.659 |
-| PAD | 1y | 0.623 | 0.710 | 0.589 | 0.708 |
-| PAD | 3y | 0.646 | 0.700 | 0.628 | 0.657 |
-| PAD | 5y | 0.666 | 0.716 | 0.664 | 0.675 |
+| MI | 1y | 0.752 | 0.747 | 0.711 | 0.679 |
+| MI | 3y | 0.740 | 0.732 | 0.700 | 0.674 |
+| MI | 5y | 0.713 | 0.706 | 0.675 | 0.676 |
+| Stroke | 1y | 0.772 | 0.764 | 0.680 | 0.678 |
+| Stroke | 3y | 0.763 | 0.756 | 0.724 | 0.724 |
+| Stroke | 5y | 0.734 | 0.725 | 0.708 | 0.717 |
+| HF | 1y | 0.717 | 0.749 | 0.653 | 0.620 |
+| HF | 3y | 0.695 | 0.720 | 0.633 | 0.624 |
+| HF | 5y | 0.701 | 0.711 | 0.658 | 0.662 |
+| AF | 1y | 0.810 | 0.829 | 0.670 | 0.737 |
+| AF | 3y | 0.696 | 0.687 | 0.629 | 0.655 |
+| AF | 5y | 0.681 | 0.689 | 0.621 | 0.653 |
+| PAD | 1y | 0.624 | 0.707 | 0.626 | 0.706 |
+| PAD | 3y | 0.646 | 0.703 | 0.646 | 0.659 |
+| PAD | 5y | 0.666 | 0.718 | 0.664 | 0.683 |
+
+This is the tuned TKG-Transformer (8 attention heads, learning rate 3e-3), selected by a joint hyperparameter search over seed 42 and then retrained across all 5 seeds. See the explanation-trustworthiness section below for the accuracy/fidelity tradeoff that tuning produced.
 
 **Cox and XGBoost are statistically indistinguishable.** A paired DeLong test across all 15 cells finds no significant difference anywhere (p ranges 0.23–0.90).
 
@@ -84,13 +86,15 @@ The PAD finding is worth stating precisely: the patient-graph model beats Cox in
 
 **The patient-graph model's advantage over Cox concentrates in patients with thin pre-index medical histories — the one place a theory of how this model should work actually predicts it should.** Patients were split into "thin" (below the train-set median pre-index fact count) and "rich" (at or above) groups, and the patient-graph-minus-Cox AUROC margin was computed separately within each, replicated across all 5 seeds (not a single snapshot) — a cell only counts as confirmed if the thin-history margin is larger in at least 4 of 5 independently-trained instances, the same bar every other robustness claim in this project has to clear. Message-passing between patients is supposed to help most exactly when a patient's own record is sparse, by borrowing signal from similar patients elsewhere in the graph. That is what happens, mostly: **12 of 15 disease/horizon cells confirm the pattern (sign test p=0.035)**. The exceptions are informative rather than just noise: heart failure at 5 years goes the other way (confirmed in only 1/5 seeds), and PAD's own multi-seed replication is more mixed than a single seed suggested — only the 1-year cell confirms cleanly (5/5 seeds, and the largest effect anywhere: +0.134 thin vs. +0.045 rich), while PAD at 3 and 5 years do not confirm (0/5 and 2/5). Splitting an already-small test set in half pushes some cells down to as few as 8–19 positive cases, so individual cell margins are noisy — but the cross-cell direction, tested the same way 5 times over, is unlikely to be chance. This is the clearest evidence in this project that the patient-graph model is doing something mechanistically distinct from the other three, not just a noisier version of the same prediction (`src/ablations/cold_start_stratification.py`).
 
-**The TKG-Transformer has almost no robust wins or losses against Cox** — the one exception is a robust loss on heart attack at 3 and 5 years. Every other cell fails to reach the stricter bar in either direction.
+**The TKG-Transformer has almost no robust wins or losses against Cox** — the one exception is a robust loss on atrial fibrillation at 1 year. Every other cell fails to reach the stricter bar in either direction.
 
-**Correcting across both models' claims together is stricter still.** The two multi-seed families (TKG-Transformer vs. baselines, patient-graph model vs. baselines) are usually Bonferroni-corrected separately, 30 comparisons each — but both are really answering the same question ("does graph-derived structure help here"), so a reviewer correcting across their 60-comparison union reaches a different bar. Under that combined correction, 25 of 60 comparisons stay significant (vs. 29 under the looser per-family bar); a Benjamini-Hochberg FDR alternative keeps 55 of 60.
+**Correcting across both models' claims together is stricter still.** The two multi-seed families (TKG-Transformer vs. baselines, patient-graph model vs. baselines) are usually Bonferroni-corrected separately, 30 comparisons each — but both are really answering the same question ("does graph-derived structure help here"), so a reviewer correcting across their 60-comparison union reaches a different bar. Under that combined correction, 24 of 60 comparisons stay significant (vs. 27 under the looser per-family bar); a Benjamini-Hochberg FDR alternative keeps 52 of 60.
 
 **F1 and precision/recall.** AUROC is a ranking metric; with events this rare (0.4%–5.2% test-set prevalence), a threshold-based metric like recall needs care — optimizing for recall alone is degenerate, since flagging every patient always achieves recall = 1.0 (confirmed directly: every hyperparameter config tried, for both XGBoost and the patient-graph model, tied at exactly 1.0). F1 is the practical alternative. A separate hyperparameter search selecting on F1 instead of AUROC (`src/ablations/xgb_survival_sweep_recall_f1.py`, `src/ablations/patient_graph_gnn_sweep_recall_f1.py`) found real differences in validation F1 across configs, but a paired bootstrap test on the resulting best-F1 gap between the patient-graph model and each baseline found **no significant difference in any of the 30 cells checked** (15 vs. XGBoost, 15 vs. Cox) — the same one-sample t-test that overstates AUROC significance also calls 10–11 of those 15 cells "significant" each, which is the same gap between the two tests seen everywhere else in this project. AUPRC (the threshold-free analogue) tells the same story: mean AUPRC across all 15 cells is 0.068 (Cox), 0.072 (XGBoost), 0.047 (patient-graph model), with bootstrapped 95% CIs that overlap in every single cell.
 
-**Explanation trustworthiness.** Tested formally, not by eyeballing attention weights: take the facts a model calls "important" for a prediction, and check whether they actually matter more than a random set of facts of the same size. Two directions — does removing the important facts hurt the prediction more than removing random ones (**comprehensiveness**), and does keeping only the important facts preserve the prediction as well as keeping a random set (**sufficiency**). Comprehensiveness passes cleanly for every model. Sufficiency is consistently weaker — borderline for the sequence models, and for the patient-graph model specifically, it never passes: the "important" facts do no better than random at preserving the prediction. This pattern has replicated identically across every version of this analysis, which makes it the most trustworthy qualitative finding in the project. Checkpoint selection requires at least 15 full training passes before a model is eligible to be called "final" — earlier stopping points produce a model whose stated attention is statistically indistinguishable from random, even when its raw prediction accuracy still looks reasonable.
+**Explanation trustworthiness.** Tested formally, not by eyeballing attention weights: take the facts a model calls "important" for a prediction, and check whether they actually matter more than a random set of facts of the same size. Two directions — does removing the important facts hurt the prediction more than removing random ones (**comprehensiveness**), and does keeping only the important facts preserve the prediction as well as keeping a random set (**sufficiency**). The patient-graph model's comprehensiveness passes cleanly: an 84.0% win rate, significant under both a paired t-test and a Wilcoxon test. Its sufficiency does not: a 46.7% win rate, below chance, and the two significance tests disagree with each other (t-test p=0.0016, Wilcoxon p=0.427).
+
+The TKG-Transformer is where tuning left a mark. Before tuning, its comprehensiveness passed cleanly too (74% win rate, significant). After tuning for accuracy (the 8-head, lr=3e-3 configuration reported above), that dropped to a 56.7% win rate — no longer distinguishable from chance (p=0.939 t-test, p=0.163 Wilcoxon). Its sufficiency was never strong and stayed that way (49.3% win rate post-tuning, not significant). This is a real, disclosed cost of tuning: the accuracy gain on MI and stroke came at the expense of whether the model's stated "important facts" actually mean anything. Checkpoint selection requires at least 15 full training passes before a model is eligible to be called "final" — earlier stopping points produce a model whose stated attention is statistically indistinguishable from random, even when its raw prediction accuracy still looks reasonable.
 
 **Calibration.** Does a predicted 30% risk actually happen about 30% of the time? Checked for the two models that output a real probability (the TKG-Transformer and the patient-graph model) via reliability diagrams; Cox and XGBoost output a relative risk score rather than a probability, so they're checked instead by whether a higher predicted-risk decile has a higher observed event rate, moving up monotonically. For every model and every disease, there's at least one step where it doesn't move up smoothly — most likely too few cases at this horizon to measure calibration precisely, rather than a sign of real miscalibration, but not fully ruled out either way.
 
