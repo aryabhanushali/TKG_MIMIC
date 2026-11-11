@@ -63,14 +63,21 @@ def fig_sample_size():
     mim = lc[lc.dataset == "MIMIC"]
     # x = number of training patients, from the cells' run labels files via train events is
     # disease-specific; use the fraction of MIMIC's 23,516 train patients instead.
+    ends = {}
     for m in ["cox", "xgb", "tkg", "pg"]:
         s = mim[mim.model == m].sort_values("train_frac")
         if s.empty:
             continue
         x = s.train_frac * 23516
         ax.plot(x, s.mean_auroc, color=COLOR[m], marker=MARK[m], **_ring())
-        ax.annotate(LABEL[m], (x.iloc[-1], s.mean_auroc.iloc[-1]), xytext=(6, 0),
-                    textcoords="offset points", va="center", fontsize=8, color=INK)
+        ends[m] = (x.iloc[-1], s.mean_auroc.iloc[-1])
+    # end labels, nudged apart so close finishes (TKG vs patient-graph) don't collide
+    gap, prev = 0.009, None
+    for m, (x1, y1) in sorted(ends.items(), key=lambda kv: kv[1][1]):
+        y = y1 if prev is None else max(y1, prev + gap)
+        prev = y
+        ax.annotate(LABEL[m], (x1, y1), xytext=(x1 * 1.15, y), textcoords="data",
+                    va="center", fontsize=8, color=INK)
     ehr = lc[lc.dataset == "EHRSHOT"]
     if len(ehr):
         ax.axvline(1660, color=MUTED, linewidth=0.8, linestyle=":")
@@ -96,8 +103,14 @@ def fig_sample_size():
                     markerfacecolor=COLOR[m] if filled else "white", markeredgewidth=1.4,
                     markeredgecolor=COLOR[m] if not filled else "white",
                     label=f"{ds}{' (all fractions)' if ds == 'MIMIC' else ' (5-fold CV)'}")
-        for _, r in g[g.dataset == "EHRSHOT"].iterrows():
-            ax.annotate(r.cause, (r.ev, r.delta), xytext=(5, -3), textcoords="offset points", fontsize=7, color=MUTED)
+        eh = g[g.dataset == "EHRSHOT"].sort_values("delta")
+        prev = None
+        for _, r in eh.iterrows():  # stack labels so near-identical points stay legible
+            dy = 0 if prev is None or abs(r.delta - prev[0]) > 0.012 or abs(np.log10(r.ev / prev[1])) > 0.25 else 8
+            prev = (r.delta, r.ev)
+            left = r.cause == "AF"  # AF/HF sit together; put AF on the left side
+            ax.annotate(r.cause, (r.ev, r.delta), xytext=(-7 if left else 6, -3 + (0 if left else dy)),
+                        textcoords="offset points", ha="right" if left else "left", fontsize=7, color=MUTED)
         x = np.log10(g.ev.to_numpy())
         b1, b0 = np.polyfit(x, g.delta.to_numpy(), 1)
         xs = np.linspace(x.min(), x.max(), 50)
