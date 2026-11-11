@@ -189,7 +189,10 @@ def build_descriptors(labels: pd.DataFrame) -> pd.DataFrame:
         d[f"idx_{cond}"] = d["cardiometa_types"].fillna("").str.split(",").apply(lambda t: cond in t)
 
     adm_path = os.path.join(DATA_DIR, "admissions.csv.gz")
-    if os.path.exists(adm_path):
+    race_csv = os.path.join(OUTPUT_DIR, "race.csv")   # non-MIMIC datasets (EHRSHOT cv_pool.py)
+    if os.path.exists(race_csv):
+        d = d.merge(pd.read_csv(race_csv), on="subject_id", how="left")
+    elif os.path.exists(adm_path):
         adm = pd.read_csv(adm_path, usecols=["subject_id", "race"])
         race = adm.groupby("subject_id")["race"].agg(lambda s: s.mode().iloc[0] if len(s.mode()) else np.nan)
         d = d.merge(race.apply(_race_bucket).rename("race_bucket"), left_on="subject_id",
