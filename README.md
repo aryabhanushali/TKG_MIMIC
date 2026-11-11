@@ -102,7 +102,7 @@ The TKG-Transformer is where tuning left a mark. Before tuning, its comprehensiv
 
 ## Limitations, honestly
 
-- **Single hospital system.** All data is from one Boston hospital; how well any of this generalizes elsewhere is untested.
+- **Single hospital system.** All data is from one Boston hospital; how well any of this generalizes elsewhere is untested. The eICU portability analysis (see below) applies the trained MIMIC models to a multi-centre ICU dataset without retraining — it is a covariate-shift test, not a full external validation, and structural differences between the two datasets (M1–M6) reduce the expected transferred discrimination.
 - **No model wins outright.** It depends on the disease and the time horizon — there's no single model to point to as "the best one." Cox and XGBoost are indistinguishable from each other; the patient-graph model's one robust advantage over the sequence model is real, but its advantage over Cox is not statistically confirmed at the level this project otherwise requires.
 - **A one-sample significance test against a single seed's result is not enough on its own.** Every place in this project where the stricter paired test was run alongside the standard one, the standard test called more things "significant." Prefer the paired test where both are available.
 - **No reliable way to check fairness gaps** by age or race, given this cohort's demographics — every subgroup breakdown attempted came down to too few disease-positive patients to trust.
@@ -113,6 +113,81 @@ The TKG-Transformer is where tuning left a mark. Before tuning, its comprehensiv
 - **The 5-year results rest on a smaller group of patients than the 1-year results**, since many patients haven't been followed that long yet — standard practice, but worth knowing when comparing horizons.
 - **Only 5 random seeds** were used for the main robustness checks — a reasonable minimum, not a generous number, especially for PAD's small sample.
 - **Two known data-labeling quirks in MIMIC-IV**, disclosed rather than worked around: the specific heart-failure marker "BNP" isn't recorded (MIMIC-IV records the related NT-proBNP test under a different label), and the heart-attack marker captured is specifically Troponin T, not Troponin I.
+
+## eICU Portability Analysis
+
+The trained MIMIC-IV Cox and XGBoost models are evaluated on eICU v2.0 via a
+**model-transfer / portability analysis** — the models are applied to eICU patients
+scored in the same feature space *without retraining*. This is a covariate-shift
+test, not an independent external validation.
+
+### Why not a parallel pipeline?
+
+eICU's temporal structure makes a parallel train/test pipeline infeasible:
+
+- Only two calendar years of data (2014–2015); no absolute dates, only minute offsets
+- Most patients have a single ICU stay; inter-stay intervals are unverifiable
+- The cross-year design (2014 index → 2015 outcome) yields ~1 year maximum follow-up
+
+### What was actually done
+
+1. **Cohort** (`src/eicu/cohort_eicu.py`): eICU patients with a cardiometabolic
+   ICU stay in 2014 whose index stay is their first available anchor. Circulatory
+   endpoint is defined as a *later* stay in 2015 with a Primary-position diagnosis
+   of MI / Stroke / HF / AF / PAD. Washout excludes patients with prevalent
+   circulatory disease in pastHistory.csv or any prior diagnosis row.
+
+2. **Features** (`src/eicu/features_eicu.py`): Eight event modalities (diagnoses,
+   medications, labs, periodic vitals, aperiodic vitals, ICU stay facts, IV
+   infusions, urine output) are mapped to the same concept IDs used in the MIMIC
+   training matrix. Structural mismatches are flagged explicitly rather than
+   handled silently:
+
+   | Flag | Issue |
+   |------|-------|
+   | M1 | OMR_BP_*/OMR_BMI_* (MIMIC outpatient table) → all-zero for every eICU patient |
+   | M2 | had_icu_stay proxy differs: eICU captures prior *unit* visits, not prior hospital admissions |
+   | M3 | eICU drug names include dosage/route; prefix-stripping heuristic used; unmatched drugs → 0 |
+   | M4 | Pre-index window = index ICU stay only (~1–3 days vs. MIMIC's 5 years) |
+   | M5 | ICD codes in eICU include dots ("414.00"); dots stripped to match MIMIC concept IDs |
+   | M6 | vitalPeriodic BP in eICU is invasive arterial; mapped to same VITAL_BP_* as MIMIC |
+
+3. **Scoring + evaluation** (`src/eicu/transfer_eval.py`): MIMIC-trained Cox and
+   XGBoost models score eICU patients directly. Discrimination is measured as
+   1-year AUROC under the same competing-risks rule used in MIMIC (3- and 5-year
+   horizons are not feasible). Calibration is assessed via 10-decile observed
+   event rates. Outputs: `eicu_transfer_discrimination.csv`,
+   `eicu_transfer_calibration.csv`, `eicu_transfer_report.txt`.
+
+### Expected limitations
+
+- Reduced AUROC relative to MIMIC hold-out is *expected* given M1–M6, especially
+  M4 (feature sparsity from the short pre-index window).
+- PAD typically has 0 Primary-position eICU cases; AUROC is undefined.
+- AUROC confidence intervals are wide at small n_pos — interpret the direction,
+  not the magnitude.
+- This analysis speaks to **feature-space portability**, not to whether the
+  MIMIC-trained risk ranking is clinically actionable in another ICU.
+
+### How to run
+
+```bash
+PY=/path/to/python
+
+# Prerequisites: MIMIC pipeline must be run first (generates transfer_artifacts/)
+MIMIC_HOSP_DIR=/path/to/mimic/hosp \
+MIMIC_ICU_DIR=/path/to/mimic/icu \
+MIMIC_OUTPUT_DIR=/path/to/tkg_output \
+$PY -u -m src.baselines_survival   # generates transfer_artifacts/ at seed 42
+
+# eICU portability evaluation
+EICU_DATA_DIR=/path/to/eicu/2.0 \
+EICU_OUTPUT_DIR=/path/to/eicu_transfer_output \
+MIMIC_OUTPUT_DIR=/path/to/tkg_output \
+$PY -u -m src.eicu.transfer_eval
+```
+
+---
 
 ## How to reproduce this
 
@@ -185,6 +260,14 @@ $PY -u -m src.make_paper_figures
 
 **Settings you can change** via environment variables: `TKG_SEED` (changes model randomness only, never the train/val/test split).
 
+```bash
+# eICU portability analysis (requires MIMIC pipeline to have been run first)
+EICU_DATA_DIR=/path/to/eicu/2.0 \
+EICU_OUTPUT_DIR=/path/to/eicu_transfer_output \
+MIMIC_OUTPUT_DIR=/path/to/tkg_output \
+$PY -u -m src.eicu.transfer_eval
+```
+
 ## Repository layout
 
 ```
@@ -206,6 +289,12 @@ TKG_MIMIC/
     |-- patient_gnn_survival[_seed*]/    # patient-graph model per seed
     |-- knn_baseline/                    # naive similar-patients baseline
     `-- survival_comparison_test.csv     # main head-to-head results table
+eicu_transfer_output/               # eICU portability outputs (not gitignored; no patient data)
+    |-- cohort_eicu.csv                 # eICU cardiometabolic cohort (~364 patients)
+    |-- cohort_eicu_cascade.csv         # exclusion cascade counts
+    |-- eicu_transfer_discrimination.csv # 1-year AUROC per cause + model
+    |-- eicu_transfer_calibration.csv   # 10-decile calibration table
+    `-- eicu_transfer_report.txt        # full portability report with M1–M6 flags
 ```
 
 ```
@@ -227,6 +316,12 @@ src/
 |-- visualize_tkg.py, visualize_stats.py, make_figures.py  # figures
 |-- make_paper_figures.py     # publication-ready figures (paper_figures/, not gitignored)
 |-- explain.py, explain_discriminative.py, explain_heatmap.py, explain_gnn.py  # explainability
+|-- eicu/
+|   |-- __init__.py
+|   |-- config_eicu.py       # eICU paths, code/label mappings (labs, vitals, drugs)
+|   |-- cohort_eicu.py       # cardiometabolic cohort builder (cross-year 2014→2015)
+|   |-- features_eicu.py     # maps eICU tables to MIMIC concept space (M1–M6 flags)
+|   `-- transfer_eval.py     # loads MIMIC models, scores eICU patients, writes report
 `-- ablations/
     |-- build_ontology.py                    # hand-built medical hierarchy (feeds the patient-graph model)
     |-- build_cooccurrence.py                # data-driven concept co-occurrence edges (train-only)

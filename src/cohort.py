@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import (
-    DATA_DIR, OUTPUT_DIR,
+    DATA_DIR, ICU_DATA_DIR, OUTPUT_DIR,
     CARDIOMETA_ICD10, CARDIOMETA_ICD9,
     ENDPOINTS_ICD10, ENDPOINTS_ICD9,
     ENDPOINT_HISTORY_ICD10, ENDPOINT_HISTORY_ICD9,
@@ -85,7 +85,7 @@ def build_cohort() -> pd.DataFrame:
         low_memory=False,
     )
     icu = pd.read_csv(
-        os.path.join(DATA_DIR, "icustays.csv.gz"),
+        os.path.join(ICU_DATA_DIR, "icustays.csv.gz"),
         usecols=["subject_id", "hadm_id", "stay_id", "intime", "outtime", "los"],
         parse_dates=["intime", "outtime"],
         low_memory=False,

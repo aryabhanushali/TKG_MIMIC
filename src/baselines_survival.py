@@ -15,6 +15,7 @@ selected settings -- re-run either sweep script to re-derive them from
 scratch on validation data only.
 """
 import os
+import pickle
 import numpy as np
 import pandas as pd
 from scipy import sparse
@@ -47,6 +48,20 @@ COX_L1_RATIO = 0.9
 # Selected by xgb_survival_sweep.py (coordinate-wise validation search).
 XGB_CONFIG = dict(n_estimators=100, learning_rate=0.02, max_depth=3, subsample=1.0, colsample_bytree=0.5)
 
+# Optional per-dataset override (e.g. EHRSHOT, written by
+# src/ehrshot/select_hparams.py from that dataset's own validation sweeps).
+# Absent for MIMIC, so the MIMIC-tuned constants above stay in force there.
+_HP_PATH = os.environ.get("TKG_SURV_HPARAMS",
+                          os.path.join(OUTPUT_DIR, "hparams_survival.json"))
+if os.path.exists(_HP_PATH):
+    import json
+    with open(_HP_PATH) as _f:
+        _hp = json.load(_f)
+    COX_ALPHA = {**COX_ALPHA, **_hp.get("cox_alpha", {})}
+    XGB_CONFIG = {**XGB_CONFIG, **_hp.get("xgb_config", {})}
+    print(f"[baselines_survival] hyperparameters overridden from {_HP_PATH}: "
+          f"COX_ALPHA={COX_ALPHA} XGB_CONFIG={XGB_CONFIG}")
+
 
 def _load():
     print("Loading modeling artifacts...")
@@ -74,8 +89,9 @@ def _build_X(labels, static, events, nodes):
     print(f"  bag-of-codes dims: {len(concept_ids):,}")
     X_bow = _build_bag_of_codes(events, patient_order, concept_ids)
 
-    X_values, value_col_names = _build_value_summary_features(
-        events, patient_order, nodes, train_ids_set)
+    X_values, value_col_names, value_mu, value_sd, feat_concept_ids_str = \
+        _build_value_summary_features(
+            events, patient_order, nodes, train_ids_set, return_norm_params=True)
     print(f"  value summary dims: {X_values.shape[1]:,}")
 
     static_cols = ["age_at_index", "cci_score", "num_cardiometa_conditions",
@@ -87,7 +103,35 @@ def _build_X(labels, static, events, nodes):
     X = hstack([X_bow,
                 sparse.csr_matrix(X_values),
                 sparse.csr_matrix(X_static)]).tocsr()
-    return X, labels, train_mask, val_mask, test_mask
+
+    # Build concept_id-string → bag-of-codes column index for transfer pipeline.
+    # node_idx integers are internal MIMIC IDs; the string form is portable.
+    nodes_by_idx = nodes.set_index("node_idx")
+    concept_id_to_bow_col: dict[str, int] = {}
+    for col, nidx in enumerate(concept_ids):
+        try:
+            cid_str = str(nodes_by_idx.loc[nidx, "concept_id"])
+        except KeyError:
+            continue
+        concept_id_to_bow_col[cid_str] = col
+
+    feature_meta = {
+        "concept_id_to_bow_col": concept_id_to_bow_col,
+        "feat_concept_ids_str": feat_concept_ids_str,
+        "value_col_names":      value_col_names,
+        "value_mu":             value_mu,
+        "value_sd":             value_sd,
+        "static_cols":          static_cols,
+        "static_mu":            scaler.mean_,
+        "static_sd":            scaler.scale_,
+        "n_bow_cols":           len(concept_ids),
+        "n_value_cols":         X_values.shape[1],
+        "n_static_cols":        len(static_cols),
+        "cox_alpha":            COX_ALPHA,
+        "horizon_days":         HORIZON_DAYS,
+        "causes":               CAUSES,
+    }
+    return X, labels, train_mask, val_mask, test_mask, feature_meta
 
 
 def _make_y(labels: pd.DataFrame, cause: str):
@@ -129,7 +173,7 @@ def _eval_horizon_auroc(risk_score, labels, cause, horizons):
 def run() -> None:
     os.makedirs(SURV_DIR, exist_ok=True)
     labels, static, events, nodes = _load()
-    X, labels, tr_m, va_m, te_m = _build_X(labels, static, events, nodes)
+    X, labels, tr_m, va_m, te_m, feature_meta = _build_X(labels, static, events, nodes)
     print(f"  full X: shape={X.shape}, nnz={X.nnz:,}")
     X = X.astype(np.float32)
     X_tr = X[tr_m]; X_te = X[te_m]
@@ -137,6 +181,8 @@ def run() -> None:
     labels_te = labels[te_m].reset_index(drop=True)
 
     all_rows = []
+    fitted_cox: dict = {}
+    fitted_xgb: dict = {}
     test_predictions = pd.DataFrame({"subject_id": labels_te["subject_id"].to_numpy()})
     for cause in CAUSES:
         print(f"\n=== {cause} ===")
@@ -158,6 +204,7 @@ def run() -> None:
             for r in cox_rows:
                 r["model"] = "cox"; all_rows.append(r)
             test_predictions[f"cox_risk_{cause}"] = cox_risk
+            fitted_cox[cause] = cox
             del X_tr_dense
         except Exception:
             import traceback
@@ -186,6 +233,7 @@ def run() -> None:
             for r in xgb_rows:
                 r["model"] = "xgb_surv"; all_rows.append(r)
             test_predictions[f"xgb_surv_risk_{cause}"] = xgb_risk
+            fitted_xgb[cause] = xgb_clf
         except Exception:
             import traceback
             print(f"    XGBoost-survival failed for cause={cause} -- "
@@ -206,6 +254,30 @@ def run() -> None:
         print(df[df["model"] == m].pivot(
             index="cause", columns="horizon_days", values="auroc").round(3).to_string())
     print(f"\nSaved: {out_path}")
+
+    # --- Serialize models + feature metadata for the eICU transfer pipeline ---
+    # Only serialise at seed 42 (canonical run); other seeds produce identical
+    # Cox models (deterministic) and nearly identical XGBoost models, and the
+    # feature vocabulary / normalization stats are seed-independent.
+    if SEED == 42:
+        art_dir = os.path.join(SURV_DIR, "transfer_artifacts")
+        os.makedirs(art_dir, exist_ok=True)
+        meta_path = os.path.join(art_dir, "feature_meta.pkl")
+        with open(meta_path, "wb") as f:
+            pickle.dump(feature_meta, f, protocol=4)
+        print(f"\nTransfer artifacts written to: {art_dir}")
+        print(f"  {meta_path}")
+        for cause in CAUSES:
+            cox_path = os.path.join(art_dir, f"cox_{cause}.pkl")
+            xgb_path = os.path.join(art_dir, f"xgb_{cause}.pkl")
+            if f"cox_risk_{cause}" in test_predictions.columns:
+                with open(cox_path, "wb") as f:
+                    pickle.dump(fitted_cox[cause], f, protocol=4)
+                print(f"  {cox_path}")
+            if f"xgb_surv_risk_{cause}" in test_predictions.columns:
+                with open(xgb_path, "wb") as f:
+                    pickle.dump(fitted_xgb[cause], f, protocol=4)
+                print(f"  {xgb_path}")
 
 
 if __name__ == "__main__":

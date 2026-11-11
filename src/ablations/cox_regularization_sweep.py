@@ -40,7 +40,7 @@ BASELINE_ALPHA = 0.01
 def run() -> None:
     os.makedirs(STATS_DIR, exist_ok=True)
     labels, static, events, nodes = _load()
-    X, labels, tr_m, va_m, te_m = _build_X(labels, static, events, nodes)
+    X, labels, tr_m, va_m, te_m, _feature_meta = _build_X(labels, static, events, nodes)
     X = X.astype(np.float32)
     X_tr = X[tr_m]; X_va = X[va_m]; X_te = X[te_m]
     labels_tr = labels[tr_m].reset_index(drop=True)

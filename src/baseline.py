@@ -67,8 +67,8 @@ def _build_bag_of_codes(events: pd.DataFrame, patient_order: list[int],
 
 def _build_value_summary_features(
     events: pd.DataFrame, patient_order: list[int], nodes: pd.DataFrame,
-    train_ids: set,
-) -> tuple[np.ndarray, list[str]]:
+    train_ids: set, *, return_norm_params: bool = False,
+) -> tuple:
     """Per-patient summary stats for every LAB_*, OMR_BP*, OMR_BMI* concept.
 
     Returns a dense float32 array of shape (n_patients, n_concepts_with_values * 6)
@@ -83,7 +83,10 @@ def _build_value_summary_features(
         val_events["subject_id"].isin(train_ids), "concept_node_idx"].unique())
     val_events = val_events[val_events["concept_node_idx"].isin(train_concepts)]
     if val_events.empty:
-        return np.zeros((len(patient_order), 0), dtype=np.float32), []
+        empty = np.zeros((len(patient_order), 0), dtype=np.float32)
+        if return_norm_params:
+            return empty, [], np.array([]), np.array([]), []
+        return empty, []
 
     val_events = val_events.sort_values(["subject_id", "relative_days"])
     pid_to_row = {pid: i for i, pid in enumerate(patient_order)}
@@ -140,13 +143,20 @@ def _build_value_summary_features(
 
     stat_names = ["mean", "max", "min", "last", "count", "slope"]
     col_names: list[str] = []
+    feat_concept_ids_str: list[str] = []
     for c in feat_concepts:
         try:
             name = str(nodes_by_idx.loc[c, "concept_id"])
         except KeyError:
             name = f"node{c}"
+        feat_concept_ids_str.append(name)
         for s in stat_names:
             col_names.append(f"VAL_{name}_{s}")
+    if return_norm_params:
+        # mu, sd, feat_concept_ids_str are needed by the eICU transfer pipeline
+        # to apply the same normalization to out-of-domain patients without
+        # re-computing stats (which would violate train-only normalization).
+        return arr, col_names, mu, sd, feat_concept_ids_str
     return arr, col_names
 
 
