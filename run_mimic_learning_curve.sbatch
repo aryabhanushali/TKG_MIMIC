@@ -2,10 +2,13 @@
 #SBATCH --job-name=tkg_mimic_lc
 #SBATCH --partition=ice-gpu
 #SBATCH --gres=gpu:1
+# NVIDIA nodes with CUDA 13 drivers only: the env has torch 2.11+cu130, which
+# has no V100 (sm_70) kernels and cannot use the AMD (MI210 / R9700) nodes.
+#SBATCH --constraint=cuda13
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
-#SBATCH --time=12:00:00
+#SBATCH --time=04:00:00
 #SBATCH --array=0-3
 #SBATCH --output=/home/hice1/hsathu3/scratch/TKG_MIMIC/logs/mimic_lc_%A_%a.log
 #SBATCH --error=/home/hice1/hsathu3/scratch/TKG_MIMIC/logs/mimic_lc_%A_%a.log
@@ -41,6 +44,8 @@ export MIMIC_ICU_DIR=/storage/ice1/9/3/hsathu3/mimic_work/mimic_data/3.1/icu
 export MIMIC_OUTPUT_DIR=$REPO/tkg_output_lc/frac$FRAC
 export TKG_TRAIN_FRAC=$FRAC
 cd "$REPO"
+$PY -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 'no usable CUDA GPU on this node -- refusing to train on CPU')"
+$PY -c "import torch; print('GPU:', torch.cuda.get_device_name(0))"
 mkdir -p "$MIMIC_OUTPUT_DIR"
 echo "Job ${SLURM_JOB_ID:-local} frac $FRAC started $(date) on $(hostname)"
 for f in cohort.csv cohort_cascade.csv tkg_facts.csv node_index.csv; do

@@ -2,10 +2,13 @@
 #SBATCH --job-name=tkg_mimic_models
 #SBATCH --partition=ice-gpu
 #SBATCH --gres=gpu:1
+# NVIDIA nodes with CUDA 13 drivers only: the env has torch 2.11+cu130, which
+# has no V100 (sm_70) kernels and cannot use the AMD (MI210 / R9700) nodes.
+#SBATCH --constraint=cuda13
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=96G
-#SBATCH --time=12:00:00
+#SBATCH --time=02:30:00
 #SBATCH --array=42-46
 #SBATCH --output=/home/hice1/hsathu3/scratch/TKG_MIMIC/logs/mimic_models_%A_s%a.log
 #SBATCH --error=/home/hice1/hsathu3/scratch/TKG_MIMIC/logs/mimic_models_%A_s%a.log
@@ -32,6 +35,8 @@ export MIMIC_OUTPUT_DIR=$REPO/tkg_output
 SEED=${SLURM_ARRAY_TASK_ID:-42}
 export TKG_SEED=$SEED
 cd "$REPO"
+$PY -c "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 'no usable CUDA GPU on this node -- refusing to train on CPU')"
+$PY -c "import torch; print('GPU:', torch.cuda.get_device_name(0))"
 echo "Job ${SLURM_JOB_ID:-local} seed $SEED started $(date) on $(hostname)"
 
 READY=$MIMIC_OUTPUT_DIR/.graph_layers_ready
