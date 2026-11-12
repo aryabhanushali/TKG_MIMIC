@@ -385,6 +385,14 @@ def train_and_eval() -> None:
 
     test_metrics.to_csv(os.path.join(MODEL_DIR, "test_metrics.csv"), index=False)
     pd.DataFrame(history).to_csv(os.path.join(MODEL_DIR, "history.csv"), index=False)
+    # Per-patient test CIFs, same columns as tgn_survival's predictions_test.csv
+    # (needed to pool out-of-fold predictions across CV folds).
+    horizon_bins = [int(_discretize(np.array([h]), time_edges)[0]) for h in HORIZON_DAYS]
+    preds = pd.DataFrame({"subject_id": test_sids.astype(int)})
+    for h_days, h_bin in zip(HORIZON_DAYS, horizon_bins):
+        for c_idx, cause in enumerate(CAUSES):
+            preds[f"cif_{cause}_at_{h_days}d"] = cif_test[:, c_idx, h_bin]
+    preds.to_csv(os.path.join(MODEL_DIR, "predictions_test.csv"), index=False)
     torch.save({"state_dict": best_state, "best_epoch": best_epoch, "best_val_metric": best_metric},
                os.path.join(MODEL_DIR, "best_model.pt"))
     print(f"\nSaved:\n  {os.path.join(MODEL_DIR, 'test_metrics.csv')}\n"

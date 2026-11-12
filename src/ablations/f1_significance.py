@@ -69,7 +69,7 @@ def _fit_xgb_f1_tuned_predictions() -> pd.DataFrame:
     print(f"F1-tuned XGBoost config: {best_cfg}")
 
     labels, static, events, nodes = _load()
-    X, labels, tr_m, va_m, te_m = _build_X(labels, static, events, nodes)
+    X, labels, tr_m, va_m, te_m, _feature_meta = _build_X(labels, static, events, nodes)
     X = X.astype(np.float32)
     X_tr, X_te = X[tr_m], X[te_m]
     labels_tr = labels[tr_m].reset_index(drop=True)

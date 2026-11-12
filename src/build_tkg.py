@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import (
-    DATA_DIR, OUTPUT_DIR,
+    DATA_DIR, ICU_DATA_DIR, OUTPUT_DIR,
     CARDIOMETA_LAB_LABELS,
     CARDIOMETA_CHART_LABELS,
     CARDIOMETA_INPUT_LABELS,
@@ -277,7 +277,7 @@ def _labevent_facts(windows: pd.DataFrame) -> pd.DataFrame:
 def _icu_facts(windows: pd.DataFrame) -> pd.DataFrame:
     print("\n[7] Building ICU stay facts...")
     icu = pd.read_csv(
-        os.path.join(DATA_DIR, "icustays.csv.gz"),
+        os.path.join(ICU_DATA_DIR, "icustays.csv.gz"),
         usecols=["subject_id", "stay_id", "intime", "outtime", "los"],
         parse_dates=["intime", "outtime"], low_memory=False,
     )
@@ -357,7 +357,7 @@ def _chartevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
     """Vital signs from ICU chartevents (HR, BP, SpO2, RR, temp, GCS).
     Chunked because the file is 3.3 GB compressed / ~250 GB rows."""
     print("\n[9] Building chartevents (ICU vital signs) facts (chunked)...")
-    d_items = pd.read_csv(os.path.join(DATA_DIR, "d_items.csv.gz"))
+    d_items = pd.read_csv(os.path.join(ICU_DATA_DIR, "d_items.csv.gz"))
     itemid_to_concept = _resolve_itemids_by_label(d_items, CARDIOMETA_CHART_LABELS)
     item_ids = set(itemid_to_concept.keys())
     print(f"  resolved {len(item_ids)} chartevent itemids across "
@@ -373,7 +373,7 @@ def _chartevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
     rng = np.random.default_rng(SEED)
     chunksize = 1_000_000
     reader = pd.read_csv(
-        os.path.join(DATA_DIR, "chartevents.csv.gz"),
+        os.path.join(ICU_DATA_DIR, "chartevents.csv.gz"),
         usecols=["subject_id", "itemid", "charttime", "valuenum"],
         parse_dates=["charttime"],
         chunksize=chunksize, low_memory=False,
@@ -418,7 +418,7 @@ def _inputevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
     """ICU IV drips / fluids: vasopressors, IV insulin, IV diuretics, fluid boluses.
     Time-interval facts (starttime -> endtime), value_num = amount."""
     print("\n[10] Building inputevents (ICU IV drips/fluids) facts...")
-    d_items = pd.read_csv(os.path.join(DATA_DIR, "d_items.csv.gz"))
+    d_items = pd.read_csv(os.path.join(ICU_DATA_DIR, "d_items.csv.gz"))
     itemid_to_concept = _resolve_itemids_by_label(d_items, CARDIOMETA_INPUT_LABELS)
     item_ids = set(itemid_to_concept.keys())
     print(f"  resolved {len(item_ids)} inputevent itemids across "
@@ -428,7 +428,7 @@ def _inputevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
 
     cohort_ids = set(windows["subject_id"])
     inp = pd.read_csv(
-        os.path.join(DATA_DIR, "inputevents.csv.gz"),
+        os.path.join(ICU_DATA_DIR, "inputevents.csv.gz"),
         usecols=["subject_id", "itemid", "starttime", "endtime", "amount"],
         parse_dates=["starttime", "endtime"], low_memory=False,
     )
@@ -463,7 +463,7 @@ def _outputevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
     """Urine output / drainage from outputevents (renal trajectory signal).
     Time-point facts, value_num = volume."""
     print("\n[11] Building outputevents (urine / drainage) facts...")
-    d_items = pd.read_csv(os.path.join(DATA_DIR, "d_items.csv.gz"))
+    d_items = pd.read_csv(os.path.join(ICU_DATA_DIR, "d_items.csv.gz"))
     itemid_to_concept = _resolve_itemids_by_label(d_items, CARDIOMETA_OUTPUT_LABELS)
     item_ids = set(itemid_to_concept.keys())
     print(f"  resolved {len(item_ids)} outputevent itemids")
@@ -471,7 +471,7 @@ def _outputevents_facts(windows: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=FACT_COLS)
 
     out_df = pd.read_csv(
-        os.path.join(DATA_DIR, "outputevents.csv.gz"),
+        os.path.join(ICU_DATA_DIR, "outputevents.csv.gz"),
         usecols=["subject_id", "itemid", "charttime", "value"],
         parse_dates=["charttime"], low_memory=False,
     )
@@ -515,7 +515,16 @@ def build_tkg(cohort_df: pd.DataFrame | None = None) -> pd.DataFrame:
     facts_pieces.append(_chartevents_facts(windows)); gc.collect()
     facts_pieces.append(_inputevents_facts(windows)); gc.collect()
     facts_pieces.append(_outputevents_facts(windows)); gc.collect()
+    return finalize_facts(facts_pieces, cohort)
 
+
+def finalize_facts(facts_pieces: list[pd.DataFrame], cohort: pd.DataFrame) -> pd.DataFrame:
+    """Combine per-source FACT_COLS frames, add relative_days, dedup, build the
+    node index, and write tkg_facts.csv / node_index.csv to OUTPUT_DIR.
+
+    Shared by build_tkg() (MIMIC) and src/ehrshot/build_tkg_ehrshot.py so every
+    dataset emits byte-compatible TKG files for prep_modeling.py onward.
+    """
     print("\n[9] Combining all facts...")
     facts = pd.concat(facts_pieces, ignore_index=True)
     print(f"  pre-dedup: {len(facts):,} facts")

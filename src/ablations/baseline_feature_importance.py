@@ -67,7 +67,7 @@ def run() -> None:
         else:
             return static_cols[fidx - n_concepts - n_value], "static"
 
-    X, labels_b, tr_m, va_m, te_m = _build_X(labels, static, events, nodes)
+    X, labels_b, tr_m, va_m, te_m, _feature_meta = _build_X(labels, static, events, nodes)
     X = X.astype(np.float32)
     X_tr = X[tr_m]
     labels_tr = labels_b[tr_m].reset_index(drop=True)

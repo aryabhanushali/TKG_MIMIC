@@ -1,0 +1,67 @@
+\section{Discussion}
+\label{sec:discussion}
+
+Under matched inputs, a shared vocabulary, and a fixed split, neither temporal model improved on regularized Cox regression for predicting the first circulatory outcome in cardiometabolic patients. Across 15 disease-horizon cells, the patient-graph GNN never achieved a robust win over Cox and lost robustly in five; the TKG-Transformer lost robustly in one. Cox and XGBoost were indistinguishable everywhere. Against this null result, one pattern was consistent: the graph model's deficit relative to Cox narrowed in patients with sparse pre-index histories. We discuss why graph structure did not help on average, when it may, and what our evaluation choices imply for how such models are compared.
+
+\subsection{Why Graph Structure Did Not Help}
+\label{sec:disc-why}
+
+The most direct explanation is that the representations the temporal models receive discard information the fixed-feature baselines keep. Cox and XGBoost see six summaries of every numeric measurement, including the last value and the slope. The patient-graph GNN collapses each patient-concept pair into a single edge labeled with one of three recency buckets, so repeated occurrences, exact timing, and measured values are lost. Heart failure, the disease on which the GNN performed worst, illustrates the cost: its risk is closely tied to the level and trend of measurements such as renal function and blood pressure, which survive in the baselines' value summaries but not in an unweighted edge. A nearest-neighbor model with no learned parameters outperformed the GNN on 3-year heart failure (0.657 vs.\ 0.624). Moreover, a 13-configuration joint search selected the default GNN configuration, suggesting that the limit lies in the graph's construction rather than in how the model was tuned. The medication portion of the graph is also sparsely connected: few medications resolve to a drug class in our hand-built hierarchy, so most drug concepts contribute patient-to-patient paths only through exact matches.
+% TODO(authors): add the exact share of medications mapped to a drug class
+% (README: ~9%) and the share of facts that are medications (~32%) to Sec. III-B,
+% then cite them here.
+
+The TKG-Transformer preserves exact time gaps and values, so information loss alone does not explain its results. A more likely factor is that most histories are short: the training-set median is 44 pre-index facts, and only 2.5\% of training patients exceed the 256-event window. With so few events, there is little ordering or timing structure for an attention model to exploit beyond what presence indicators already encode. Five seeds also exposed considerable variability (e.g., SD $0.047$ for 1-year stroke vs.\ $0.008$ for XGBoost). This instability is easy to miss in a single-run comparison.
+
+These results agree with a broader pattern. On structured, tabular-like inputs, regularized regression and gradient-boosted trees are difficult to beat~\cite{christodoulou2019systematic,grinsztajn2022tree}. Prior graph-based cardiovascular studies often report large gains, but under conditions that favor the proposed model: accuracy on balanced cohorts~\cite{lu2021weighted}, binary outcomes at a fixed time point, or single splits. Where a strong baseline was included, the advantage narrowed; a random forest matched a graph transformer on AUPRC for heart failure~\cite{boll2024graph}. Our results suggest that, at least for first-event prediction in a single-center EHR cohort, these gains do not hold up against well-tuned survival baselines given the same information.
+
+\subsection{When Graph Structure May Help}
+\label{sec:disc-when}
+
+The history-density analysis is the one place where a mechanism specific to message passing makes a testable prediction: borrowing signal from similar patients should matter most when a patient's own record is sparse. The GNN-minus-Cox margin was larger in the thin-history group in 12 of 15 cells (sign test, $p=0.035$), most clearly for 1-year PAD ($+0.134$ thin vs.\ $+0.045$ rich, all five seeds). The same direction appears for PAD overall, where the GNN outperformed Cox in every seed at every horizon without meeting the paired criterion. PAD was also the rarest outcome and the one on which Cox was weakest.
+% TODO(authors): once discussion_findings.py has run on the 5-seed outputs, state
+% whether the GNN actually beats Cox *within* the thin-history group (mean_delta_in
+% in stats/discussion/subgroup_interaction_summary.csv), not only whether its
+% deficit is smaller there. Phrase the next sentence according to that result.
+This is an association rather than a demonstration of mechanism: thin-history patients may differ from rich-history patients in ways other than record length, and some cells rest on as few as eight positive cases. It nonetheless suggests a practical design. Rather than replacing Cox, a graph model could serve as a complementary component for patients whose records are too sparse for fixed features to be informative, which is the situation at a first encounter with a health system.
+
+\subsection{Evaluation Choices Change the Conclusions}
+\label{sec:disc-eval}
+
+How significance was tested changed the conclusions more than any modeling choice. For best-achievable F1, a one-sample $t$-test over five GNN seeds declared 11 of 15 comparisons with Cox significant, whereas a paired bootstrap on the same predictions found none of 30 significant. Across the 60 neural-versus-baseline AUROC comparisons, 24 survived a single Bonferroni correction and 52 survived Benjamini--Hochberg; only five GNN and one TKG-Transformer comparison met all three robustness conditions. PAD shows the reason. Five tightly clustered seeds make a one-sample test sensitive to a consistent shift, yet that test measures only retraining variability. It does not ask whether two models rank the same patients differently, and it ignores the comparator's own sampling error. Seed variance and test-set variance are distinct sources of uncertainty~\cite{bouthillier2021accounting}, and a claim of clinical improvement requires the paired, patient-level test.
+
+Checkpoint selection mattered as well. Without a minimum epoch count, the validation-best TKG-Transformer checkpoint came from epoch 1 in one run, scoring higher (0.709) than any checkpoint from epoch 15 onward (0.698). Selecting such a checkpoint would have reported a competitive AUROC from a model that had not yet learned a stable representation. We therefore recommend that comparisons of EHR deep learning models against clinical baselines report (i) multiple seeds, (ii) a paired test on shared test patients, (iii) the correction family used, and (iv) checkpoint-selection rules. Under these conditions, the claimed advantage in our setting disappeared.
+
+\subsection{Accuracy and Explanation Fidelity}
+\label{sec:disc-fidelity}
+
+Hyperparameter tuning improved the TKG-Transformer's AUROC mainly for MI and stroke, and it reduced the fidelity of its explanations. Before tuning, removing the top-ranked events changed its predictions more than removing random events (comprehensiveness win rate 74.0\%, $p=2.6\times10^{-4}$). After tuning, it did not (56.7\%, $p=0.939$).
+% TODO(authors): the untuned TKG-Transformer fidelity numbers are not in the
+% current Results section; add one sentence there reporting them, or cut this
+% comparison.
+Explanation fidelity is therefore not a fixed property of an architecture: model selection based only on discrimination can yield a model whose stated reasons no longer reflect its computation~\cite{jacovi2020towards}.
+
+The patient-graph GNN showed the opposite profile on the two criteria. Its top-ranked concepts were necessary (comprehensiveness win rate 84.0\%) but not sufficient (sufficiency win rate 46.7\%, Wilcoxon $p=0.427$). Its predictions seem to depend on many weak contributions spread across a patient's neighborhood rather than on a few decisive facts, which is consistent with how message passing aggregates information. For clinical use, a short list of a GNN's ``top factors'' should therefore not be presented as a summary that by itself justifies its risk estimate. Because the two models were explained with different methods, these differences describe each model-explainer pair and should not be read as a ranking of the architectures.
+
+\subsection{Clinical Implications}
+\label{sec:disc-clinical}
+
+Event prevalence was 0.4--5.2\%, and mean AUPRC was at most 0.072, so even the best model would flag many false positives for each true case at any useful sensitivity~\cite{saito2015precision}. The neural models' 3-year Brier scores (0.0148--0.0247) were close to those obtained by assigning every patient the observed 3-year incidence (0.012--0.024). The Brier score therefore reflects low prevalence more than useful probability estimates, and calibration remains unestablished. Cox and XGBoost produce relative risk scores that would require recalibration before clinical use~\cite{vancalster2019calibration}.
+% TODO(authors): report Brier skill score (1 - Brier/Brier_null) per disease in Results.
+% TODO(authors, optional): if discussion_findings.py confirms that no model's top-ranked
+% disease beats the majority-class rate among patients with an event (Cox 0.272, XGBoost
+% 0.274 vs. 0.296), add: "Although all models rank patients by risk of each disease, none
+% reliably identifies which disease will occur first among patients who have an event."
+Taken together, these results support Cox regression as the reference model for this task. Its accuracy matched or exceeded the alternatives, its single fit removes seed variability, and its coefficients can be inspected directly. A temporal or graph model would be justified only by a gain that survives paired testing, or by a specific subpopulation, such as sparse-history patients, where it adds information.
+
+\subsection{Limitations}
+\label{sec:disc-limitations}
+
+All data come from a single academic center, and the results have not been externally validated. Labs and charted vitals were subsampled (30\% and 10\%, respectively) to make building the fact store tractable. Because this removes events before any model sees them, it may affect the TKG-Transformer more than the baselines, which use summaries. Restricting outcomes to primary diagnoses improves specificity but undercounts heart failure and atrial fibrillation that are coded only as secondary diagnoses. MIMIC-IV records NT-proBNP but not BNP, and only troponin~T among troponins. The DeLong, AUPRC, fidelity, calibration, and fairness analyses use one seed, and five seeds is a modest number for the multi-seed tests. Many subgroups had fewer than ten positive cases, so we cannot draw conclusions about performance by race or ethnicity. Finally, the GNN is trained transductively; an inductive variant changed AUROC by at most 0.00046, so this choice does not explain our findings.
+% TODO(authors): move the lab/vital subsampling rates into Sec. III-B; reviewers will
+% expect to see them in Methods first.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We compared Cox regression, XGBoost, a temporal sequence Transformer, and a patient-graph GNN for predicting the first of five circulatory outcomes in 33,655 cardiometabolic patients, using identical pre-index information, five training seeds, and a predefined robustness criterion. Neither temporal model robustly outperformed Cox in any disease or horizon, and conclusions drawn from seed-level tests alone would have overstated their performance. The graph model's relative performance improved for patients with sparse histories. This identifies where patient-to-patient structure may add value, and future work should test graph designs that retain measurement values and event counts, richer drug ontologies, and hybrid models that use graph structure for sparse-history patients. More broadly, our results suggest that apparent gains of graph-based EHR models over clinical baselines should be reported with multiple seeds and paired, patient-level tests before being treated as real.

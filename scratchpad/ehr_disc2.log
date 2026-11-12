@@ -1,0 +1,83 @@
+Loading test-set predictions...
+  Cox: seeds [42]
+  XGBoost: seeds [42, 43, 44, 45, 46]
+  TKG-Transformer: seeds [42, 43, 44, 45, 46]
+  Patient-graph GNN: seeds [42, 43, 44, 45, 46]
+  2764 test patients scored by every available model
+Building pre-index descriptors and subgroups...
+1/4 Subgroup interaction scan...
+2/4 Rescued-positive profiling...
+3/4 Which disease first...
+4/4 Complementarity...
+
+DISCUSSION CANDIDATE FINDINGS (exploratory; see CSVs for every number)
+Models available: Cox (1 seed(s)), XGBoost (5 seed(s)), TKG-Transformer (5 seed(s)), Patient-graph GNN (5 seed(s))
+
+1. SUBGROUP INTERACTIONS  interaction = (A-B in subgroup) - (A-B in rest), AUROC
+   Ranked by Wilcoxon p over cells; q = BH across the whole scan. 'A wins in sg' = cells
+   where A beats B inside the subgroup itself in >=4/5 seeds.
+   [tkg_vs_xgb] no lab results (n=886, median pos/cell=15): interaction +0.084; consistent +9/-0 of 14 cells; p=0.000244, q=0.017; A-B inside sg +0.027 (A wins 5 cells)
+   [tkg_vs_xgb] no encounter before index admission (n=837, median pos/cell=22): interaction +0.050; consistent +10/-1 of 15 cells; p=0.00153, q=0.051; A-B inside sg +0.008 (A wins 6 cells)
+   [tkg_vs_cox] race: Asian (n=419, median pos/cell=12): interaction -0.054; consistent +0/-12 of 14 cells; p=0.00305, q=0.051; A-B inside sg -0.042 (A wins 2 cells)
+   [tkg_vs_cox] no lab results (n=886, median pos/cell=15): interaction +0.085; consistent +9/-1 of 14 cells; p=0.00305, q=0.051; A-B inside sg +0.054 (A wins 8 cells)
+   [pg_vs_xgb] no lab results (n=886, median pos/cell=15): interaction +0.064; consistent +10/-1 of 14 cells; p=0.00305, q=0.051; A-B inside sg +0.010 (A wins 7 cells)
+   [tkg_vs_xgb] thin history (< 77 facts, paper split) (n=1321, median pos/cell=29): interaction +0.059; consistent +10/-2 of 15 cells; p=0.00336, q=0.051; A-B inside sg +0.002 (A wins 5 cells)
+   [pg_vs_tkg] 1 index cardiometabolic condition (n=1874, median pos/cell=40): interaction +0.034; consistent +8/-0 of 15 cells; p=0.00336, q=0.051; A-B inside sg -0.013 (A wins 6 cells)
+   [tkg_vs_xgb] index dx includes HTN (n=1538, median pos/cell=50): interaction +0.056; consistent +8/-0 of 14 cells; p=0.00403, q=0.052; A-B inside sg -0.011 (A wins 4 cells)
+   [pg_vs_cox] index dx includes HTN (n=1538, median pos/cell=50): interaction -0.073; consistent +1/-11 of 14 cells; p=0.00525, q=0.052; A-B inside sg -0.027 (A wins 4 cells)
+   [pg_vs_cox] no lab results (n=886, median pos/cell=15): interaction +0.065; consistent +11/-2 of 14 cells; p=0.00525, q=0.052; A-B inside sg +0.036 (A wins 9 cells)
+   [pg_vs_cox] very thin history (bottom quartile, < 18 facts) (n=657, median pos/cell=8): interaction +0.089; consistent +10/-1 of 13 cells; p=0.0061, q=0.056; A-B inside sg +0.066 (A wins 9 cells)
+   [tkg_vs_xgb] recency-heavy history (> 0.95 of facts in last 90d) (n=1307, median pos/cell=36): interaction +0.043; consistent +9/-1 of 15 cells; p=0.00671, q=0.058; A-B inside sg -0.003 (A wins 5 cells)
+
+2. RESCUED POSITIVES (3y, diseases pooled): true positives one model ranks >=25 pct-pts higher
+   [pg_vs_cox] cox-favoured: n=62, median facts=76, concepts=34, span=201d, age=66, CCI=0
+   [pg_vs_cox] pg-favoured: n=68, median facts=320, concepts=74, span=199d, age=63, CCI=2
+   [pg_vs_tkg] pg-favoured: n=43, median facts=132, concepts=46, span=170d, age=67, CCI=2
+   [pg_vs_tkg] tkg-favoured: n=40, median facts=112, concepts=37, span=245d, age=53, CCI=0
+   [tkg_vs_cox] cox-favoured: n=69, median facts=69, concepts=33, span=237d, age=66, CCI=1
+   [tkg_vs_cox] tkg-favoured: n=64, median facts=358, concepts=72, span=198d, age=57, CCI=2
+   [pg_vs_cox] profile differs on n_concepts: 74.50 vs 34.00 (p=2.99e-09)
+   [pg_vs_cox] profile differs on cci_score: 2.00 vs 0.00 (p=4.43e-08)
+   [pg_vs_cox] profile differs on n_facts: 320.50 vs 75.50 (p=1.05e-06)
+   [pg_vs_cox] profile differs on female: 0.00 vs 1.00 (p=0.0252)
+   [pg_vs_cox] profile differs on num_cardiometa_conditions: 1.00 vs 1.00 (p=0.0253)
+   [pg_vs_tkg] profile differs on num_cardiometa_conditions: 1.00 vs 1.00 (p=0.00025)
+   [pg_vs_tkg] profile differs on cci_score: 2.00 vs 0.00 (p=0.000258)
+   [pg_vs_tkg] profile differs on age_at_index: 67.00 vs 53.00 (p=0.00232)
+   [tkg_vs_cox] profile differs on n_concepts: 72.00 vs 33.00 (p=2.42e-07)
+   [tkg_vs_cox] profile differs on n_facts: 358.00 vs 69.00 (p=4.17e-06)
+   [tkg_vs_cox] profile differs on age_at_index: 57.00 vs 66.00 (p=9.13e-05)
+   [tkg_vs_cox] profile differs on cci_score: 2.00 vs 1.00 (p=0.00408)
+   [pg_vs_cox] concept DRUG_ACETAMINOPHEN (prescription): 63% vs 16%, OR=8.53, p=4.5e-08, q=3.2e-06
+   [pg_vs_cox] concept DRUG_RXNORM_1807627 (prescription): 53% vs 11%, OR=8.31, p=3.2e-07, q=1.1e-05
+   [tkg_vs_cox] concept VITAL_RESP_RATE (vital): 77% vs 36%, OR=5.57, p=4.2e-06, q=3.9e-05
+   [tkg_vs_cox] concept VITAL_BP_DIA (vital): 77% vs 36%, OR=5.57, p=4.2e-06, q=3.9e-05
+   [tkg_vs_cox] concept VITAL_BP_SYS (vital): 77% vs 36%, OR=5.57, p=4.2e-06, q=3.9e-05
+   [tkg_vs_cox] concept VITAL_HEART_RATE (vital): 77% vs 36%, OR=5.57, p=4.2e-06, q=3.9e-05
+   [tkg_vs_cox] concept LAB_SODIUM (lab): 91% vs 55%, OR=7.36, p=4.9e-06, q=3.9e-05
+   [tkg_vs_cox] concept LAB_BUN (lab): 91% vs 55%, OR=7.36, p=4.9e-06, q=3.9e-05
+   [pg_vs_cox] concept DRUG_PANTOPRAZOLE (prescription): 43% vs 8%, OR=7.81, p=6.5e-06, q=0.00015
+   [pg_vs_cox] concept OMR_BP_NORMAL (omr_bp): 72% vs 34%, OR=4.90, p=1.9e-05, q=0.00032
+   [pg_vs_cox] concept DRUG_RXNORM_1740467 (prescription): 43% vs 10%, OR=6.49, p=2.2e-05, q=0.00032
+   [pg_vs_cox] concept DRUG_CEFAZOLIN (prescription): 25% vs 2%, OR=13.93, p=6.7e-05, q=0.00058
+   [pg_vs_tkg] concept LAB_TROPONIN_I (lab): 5% vs 35%, OR=0.11, p=0.00056, q=0.023
+   [pg_vs_tkg] concept LAB_HBA1C (lab): 7% vs 30%, OR=0.20, p=0.0093, q=0.16
+   [pg_vs_tkg] concept CPT4_88305 (procedure): 30% vs 8%, OR=4.74, p=0.012, q=0.16
+   [pg_vs_tkg] concept CPT4_36415 (procedure): 60% vs 38%, OR=2.49, p=0.049, q=0.49
+   [pg_vs_tkg] concept DRUG_RXNORM_1807627 (prescription): 40% vs 20%, OR=2.52, p=0.06, q=0.49
+   [pg_vs_tkg] concept OMR_BP_NORMAL (omr_bp): 60% vs 40%, OR=2.25, p=0.08, q=0.55
+
+3. WHICH DISEASE FIRST (events within 5y; argmax of within-disease percentile risk)
+   Cox: top-1 acc 0.236 (sd 0.000), macro OvR AUC 0.534, majority-class 0.351
+   Patient-graph GNN: top-1 acc 0.194 (sd 0.014), macro OvR AUC 0.491, majority-class 0.351; seed-avg vs Cox -0.059 [-0.106, -0.009]
+   TKG-Transformer: top-1 acc 0.201 (sd 0.010), macro OvR AUC 0.502, majority-class 0.351; seed-avg vs Cox -0.043 [-0.095, +0.007]
+   XGBoost: top-1 acc 0.232 (sd 0.009), macro OvR AUC 0.515, majority-class 0.351; seed-avg vs Cox -0.017 [-0.067, +0.030]
+
+4. COMPLEMENTARITY (rank-average with Cox vs Cox alone)
+   Cox+Patient-graph GNN: mean gain +0.0243, gains in 12/15 cells, DeLong p<0.05 (gain) in 5; median Spearman with Cox 0.38
+   Cox+TKG-Transformer: mean gain +0.0435, gains in 15/15 cells, DeLong p<0.05 (gain) in 12; median Spearman with Cox 0.33
+   Cox+XGBoost: mean gain +0.0357, gains in 15/15 cells, DeLong p<0.05 (gain) in 6; median Spearman with Cox 0.36
+   (Cox+XGBoost is the same-information control: a larger gain from a neural partner
+    suggests signal the fixed-feature vector does not capture.)
+
+All outputs in /storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output_ehrshot/cv/pooled/stats/discussion

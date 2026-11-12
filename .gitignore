@@ -3,6 +3,9 @@ mimic_data/
 
 # Derived artifacts (large; reproduced by the pipeline)
 tkg_output/
+# EHRSHOT-derived patient-level data (Stanford DUA: cannot be redistributed)
+tkg_output_ehrshot/
+tkg_output_*/
 
 # Python
 __pycache__/
@@ -30,3 +33,6 @@ Thumbs.db
 .env
 *.pem
 *.key
+
+# SLURM job logs (print cohort counts / paths)
+logs/

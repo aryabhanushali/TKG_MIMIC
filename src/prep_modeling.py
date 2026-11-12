@@ -4,10 +4,61 @@ import os
 import numpy as np
 import pandas as pd
 
-from src.config import OUTPUT_DIR, PRE_INDEX_WINDOW_DAYS, SEED
+from src.config import (DATA_DIR, OUTPUT_DIR, PRE_INDEX_WINDOW_DAYS, SEED,
+                        SPLIT_MODE, TEMPORAL_TRAIN_MAX_YEAR,
+                        TEMPORAL_VAL_MAX_YEAR, CV_FOLDS, CV_FOLD,
+                        CV_HASH_SEED, SPLIT_TAG, TRAIN_FRAC,
+                        TRAIN_SUBSAMPLE_HASH_SEED)
 
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
+SPLIT_MODE_MARKER = os.path.join(MODELING_DIR, "split_mode.txt")
 ENDPOINT_ORDER = ["MI", "Stroke", "HF", "AF", "PAD", "censored"]
+
+
+def _check_split_mode_marker() -> None:
+    """Refuse to overwrite a modeling/ dir built under a different split mode.
+
+    Every downstream script reads modeling/labels.csv, so silently replacing
+    the main random split with a temporal one (or vice versa) would make every
+    later rerun in that OUTPUT_DIR evaluate on a different test set than the
+    results already reported from it. A dir with labels.csv but no marker
+    predates this check and was necessarily built in random mode.
+    """
+    if os.path.exists(SPLIT_MODE_MARKER):
+        with open(SPLIT_MODE_MARKER) as f:
+            existing = f.read().strip()
+    elif os.path.exists(os.path.join(MODELING_DIR, "labels.csv")):
+        existing = "random"
+    else:
+        return
+    if existing != SPLIT_TAG:
+        raise RuntimeError(
+            f"{MODELING_DIR} was built with split mode {existing!r} but "
+            f"this run is {SPLIT_TAG!r}. Point MIMIC_OUTPUT_DIR at a "
+            f"separate directory for this split mode / fold.")
+
+
+def _temporal_split(cohort: pd.DataFrame) -> tuple[dict[int, str], pd.Series]:
+    """Patient-level split by approximate real year of the index admission.
+
+    Returns ({subject_id: 'train'|'val'|'test'}, era_year per subject_id).
+    See the TKG_SPLIT_MODE note in config.py for the era_year definition and
+    why the default cut points guarantee train index years < test index years.
+    """
+    patients = pd.read_csv(
+        os.path.join(DATA_DIR, "patients.csv.gz"),
+        usecols=["subject_id", "anchor_year", "anchor_year_group"],
+    )
+    df = cohort[["subject_id", "index_date"]].merge(
+        patients, on="subject_id", how="left")
+    if df["anchor_year_group"].isna().any():
+        raise ValueError("cohort patients missing from patients.csv.gz")
+    group_start = df["anchor_year_group"].str[:4].astype(int)
+    era_year = group_start + (df["index_date"].dt.year - df["anchor_year"])
+    split = np.where(era_year <= TEMPORAL_TRAIN_MAX_YEAR, "train",
+                     np.where(era_year <= TEMPORAL_VAL_MAX_YEAR, "val", "test"))
+    assignment = dict(zip(df["subject_id"].astype(int), split))
+    return assignment, pd.Series(era_year.to_numpy(), index=df["subject_id"])
 
 
 def _patient_bucket(subject_id: int, seed: int, n_buckets: int = 10_000) -> int:
@@ -58,6 +109,21 @@ def _stratified_split(df: pd.DataFrame, label_col: str,
     return assignment
 
 
+def _cv_split(subject_ids, fold: int, n_folds: int,
+              seed: int = CV_HASH_SEED) -> dict[int, str]:
+    """K-fold assignment from the same per-patient hash as _stratified_split
+    (stable under any other patient's cohort membership). test = `fold`,
+    val = `fold + 1` (mod K), train = everything else."""
+    if not 0 <= fold < n_folds:
+        raise ValueError(f"TKG_CV_FOLD={fold} outside [0, {n_folds})")
+    out = {}
+    for sid in subject_ids:
+        f = _patient_bucket(int(sid), seed) * n_folds // 10_000
+        out[int(sid)] = ("test" if f == fold
+                         else "val" if f == (fold + 1) % n_folds else "train")
+    return out
+
+
 def _to_parquet_or_csv(df: pd.DataFrame, base_path: str) -> str:
     """Try parquet; fall back to csv if pyarrow/fastparquet is unavailable."""
     try:
@@ -71,9 +137,33 @@ def _to_parquet_or_csv(df: pd.DataFrame, base_path: str) -> str:
         return path
 
 
+def _subsample_train(cohort, facts, nodes):
+    """TKG_TRAIN_FRAC < 1: drop all but a hashed fraction of TRAIN patients.
+
+    The split is recomputed here exactly as step 3 below computes it (it is a
+    pure per-patient hash, so the reduced cohort gets identical assignments),
+    and only train patients are candidates for removal. Removed patients lose
+    their cohort row, facts and PATIENT_ node, so no model sees them at all.
+    """
+    if SPLIT_MODE != "random":
+        raise ValueError("TKG_TRAIN_FRAC is only supported with TKG_SPLIT_MODE=random")
+    assignment = _stratified_split(cohort[["subject_id", "endpoint_type"]], "endpoint_type")
+    cut = int(round(TRAIN_FRAC * 10_000))
+    drop = {sid for sid, s in assignment.items()
+            if s == "train" and _patient_bucket(sid, TRAIN_SUBSAMPLE_HASH_SEED) >= cut}
+    n_train = sum(s == "train" for s in assignment.values())
+    print(f"\nTKG_TRAIN_FRAC={TRAIN_FRAC:g}: keeping {n_train - len(drop):,} of "
+          f"{n_train:,} train patients (val/test unchanged)")
+    cohort = cohort[~cohort["subject_id"].isin(drop)].reset_index(drop=True)
+    facts = facts[~facts["subject_id"].isin(drop)]
+    nodes = nodes[~nodes["concept_id"].isin({f"PATIENT_{s}" for s in drop})]
+    return cohort, facts, nodes
+
+
 def prep_modeling() -> None:
+    _check_split_mode_marker()
     os.makedirs(MODELING_DIR, exist_ok=True)
-    print(f"Output: {MODELING_DIR}")
+    print(f"Output: {MODELING_DIR}  (split mode: {SPLIT_TAG})")
 
     print("\nLoading cohort, facts, nodes...")
     cohort = pd.read_csv(
@@ -89,6 +179,9 @@ def prep_modeling() -> None:
     if "value_num" not in facts.columns:
         facts["value_num"] = np.nan
     print(f"  cohort={len(cohort):,}, facts={len(facts):,}, nodes={len(nodes):,}")
+    if TRAIN_FRAC < 1.0:
+        cohort, facts, nodes = _subsample_train(cohort, facts, nodes)
+        print(f"  after subsample: cohort={len(cohort):,}, facts={len(facts):,}")
 
     # --- 1. Pre-index window filter ----------------------------------------
     print(f"\nFiltering to pre-index window: relative_days in "
@@ -128,15 +221,29 @@ def prep_modeling() -> None:
     print(f"  active concept nodes: {(active_nodes['fact_type']!='patient').sum():,}, "
           f"patient nodes: {(active_nodes['fact_type']=='patient').sum():,}")
 
-    # --- 3. Stratified 70/15/15 split --------------------------------------
-    print("\nStratified split (70/15/15 by endpoint_type, seed={})...".format(SEED))
-    assignment = _stratified_split(cohort[["subject_id", "endpoint_type"]],
-                                    "endpoint_type")
+    # --- 3. Split ----------------------------------------------------------
+    if SPLIT_MODE == "temporal":
+        print(f"\nTemporal split (train: era_year <= {TEMPORAL_TRAIN_MAX_YEAR}, "
+              f"val: <= {TEMPORAL_VAL_MAX_YEAR}, test: later)...")
+        assignment, era_year = _temporal_split(cohort)
+    elif SPLIT_MODE == "random":
+        print("\nStratified split (70/15/15 by endpoint_type, seed={})...".format(SEED))
+        assignment = _stratified_split(cohort[["subject_id", "endpoint_type"]],
+                                        "endpoint_type")
+    elif SPLIT_MODE == "cv":
+        print(f"\n{CV_FOLDS}-fold CV split: test=fold {CV_FOLD}, "
+              f"val=fold {(CV_FOLD + 1) % CV_FOLDS}, train=rest (hash seed {CV_HASH_SEED})...")
+        assignment = _cv_split(cohort["subject_id"], CV_FOLD, CV_FOLDS)
+    else:
+        raise ValueError(f"unknown TKG_SPLIT_MODE {SPLIT_MODE!r}")
     splits = pd.DataFrame({
         "subject_id": list(assignment.keys()),
         "split": list(assignment.values()),
     })
-    cohort_with_split = cohort.merge(splits, on="subject_id", how="left")
+    if SPLIT_MODE == "temporal":
+        splits["era_year"] = splits["subject_id"].map(era_year)
+    cohort_with_split = cohort.merge(splits[["subject_id", "split"]],
+                                     on="subject_id", how="left")
 
     print("  per-split endpoint distribution:")
     crosstab = pd.crosstab(cohort_with_split["endpoint_type"],
@@ -215,6 +322,22 @@ def prep_modeling() -> None:
           f"p25={int(per_pt.quantile(0.25))}, p75={int(per_pt.quantile(0.75))}, "
           f"max={int(per_pt.max())}")
 
+    # Vocabulary coverage: share of val/test events whose concept was seen in
+    # train (anything else becomes UNK in tgn_model.py). Under the temporal
+    # split this exposes the Oct-2015 ICD-9 -> ICD-10 switch directly.
+    print("\nTrain-vocabulary coverage of events, by concept family:")
+    split_of = dict(zip(cohort_with_split["subject_id"], cohort_with_split["split"]))
+    cov = pre[["subject_id", "concept_id"]].copy()
+    cov["split"] = cov["subject_id"].map(split_of)
+    train_vocab = set(cov.loc[cov["split"] == "train", "concept_id"])
+    cov["in_train"] = cov["concept_id"].isin(train_vocab)
+    cov["family"] = np.where(cov["concept_id"].str.startswith("ICD10_"), "ICD10",
+                    np.where(cov["concept_id"].str.startswith("ICD9_"), "ICD9",
+                             "non-ICD"))
+    print(cov.groupby(["family", "split"])["in_train"].mean()
+             .unstack("split").reindex(columns=["val", "test"]).round(3)
+             .to_string())
+
     # --- 6. Save -----------------------------------------------------------
     print("\nSaving...")
     splits_path = os.path.join(MODELING_DIR, "splits.csv")
@@ -232,6 +355,8 @@ def prep_modeling() -> None:
                   "edge_type_idx": list(rel_to_idx.values())}
                  ).to_csv(edge_types_path, index=False)
     events_path = _to_parquet_or_csv(events, events_base)
+    with open(SPLIT_MODE_MARKER, "w") as f:
+        f.write(SPLIT_TAG + "\n")
 
     print(f"  {splits_path}")
     print(f"  {labels_path}")

@@ -2,9 +2,23 @@
 import os
 import pandas as pd
 
-DATA_DIR = os.path.expanduser("~/Desktop/TKG_MIMIC/mimic_data/")
-OUTPUT_DIR = os.path.expanduser("~/Desktop/TKG_MIMIC/tkg_output/")
-FIGURES_DIR = os.path.join(OUTPUT_DIR, "figures")
+# All four path env vars below are checked first; the Desktop defaults reproduce
+# the original local-machine behaviour unchanged.  On PACE (or any other server),
+# set e.g.:
+#   export MIMIC_HOSP_DIR=/storage/ice1/9/3/hsathu3/mimic_work/mimic_data/3.1/hosp
+#   export MIMIC_ICU_DIR=/storage/ice1/9/3/hsathu3/mimic_work/mimic_data/3.1/icu
+#   export MIMIC_OUTPUT_DIR=/home/hice1/hsathu3/scratch/TKG_MIMIC/tkg_output
+# MIMIC-IV v3.1 splits hospital-module files (admissions, diagnoses, labs, …)
+# into hosp/ and ICU-module files (icustays, chartevents, inputevents, …) into
+# icu/.  When the data lives in a flat directory (original local setup) both
+# DATA_DIR and ICU_DATA_DIR point to the same path.
+_default_data = os.path.expanduser("~/Desktop/TKG_MIMIC/mimic_data/")
+DATA_DIR     = os.environ.get("MIMIC_HOSP_DIR", _default_data)
+ICU_DATA_DIR = os.environ.get("MIMIC_ICU_DIR",  _default_data)
+
+_default_out = os.path.expanduser("~/Desktop/TKG_MIMIC/tkg_output/")
+OUTPUT_DIR   = os.environ.get("MIMIC_OUTPUT_DIR", _default_out)
+FIGURES_DIR  = os.path.join(OUTPUT_DIR, "figures")
 MODELING_DIR = os.path.join(OUTPUT_DIR, "modeling")
 
 
@@ -26,6 +40,44 @@ def read_events_table(usecols=None) -> pd.DataFrame:
 # labels.csv -- multi-seed TGN runs read that fixed split and vary only the
 # model's own stochasticity, which is the correct multi-seed protocol.
 SEED = int(os.environ.get("TKG_SEED", "42"))
+
+# TKG_SPLIT_MODE selects how prep_modeling.py assigns train/val/test:
+#   "random"   (default) -- hash-bucketed 70/15/15 stratified by endpoint.
+#   "temporal" -- by approximate real-world year of the index admission,
+#                 recovered from patients.anchor_year_group (MIMIC-IV shifts
+#                 dates per patient, so only 3-year resolution is available).
+# Era year = anchor_year_group start + (index year - anchor_year), i.e. the
+# EARLIEST real year the index admission could have occurred; the true year
+# lies in [era_year, era_year + 2]. Assignment:
+#   era_year <= TEMPORAL_TRAIN_MAX_YEAR  -> train  (true year <= 2015)
+#   era_year <= TEMPORAL_VAL_MAX_YEAR    -> val
+#   otherwise                            -> test   (true year >= 2017)
+# so with the defaults no training index admission can postdate any test one.
+# Run temporal mode into its own MIMIC_OUTPUT_DIR (see run_temporal_split.sbatch);
+# prep_modeling.py refuses to overwrite a modeling/ dir built in the other mode.
+SPLIT_MODE = os.environ.get("TKG_SPLIT_MODE", "random")
+#   "cv"       -- K-fold cross-validation for small cohorts (EHRSHOT). Every
+#                 patient gets a fixed fold from a seed-42 hash (independent of
+#                 TKG_SEED); fold TKG_CV_FOLD is test, fold TKG_CV_FOLD+1 (mod K)
+#                 is val, the rest train (60/20/20 at K=5). Run each fold into
+#                 its own MIMIC_OUTPUT_DIR and pool out-of-fold predictions with
+#                 src/ehrshot/cv_summary.py.
+CV_FOLDS = int(os.environ.get("TKG_CV_FOLDS", "5"))
+CV_FOLD = int(os.environ.get("TKG_CV_FOLD", "0"))
+CV_HASH_SEED = 42
+SPLIT_TAG = f"cv{CV_FOLD}of{CV_FOLDS}" if SPLIT_MODE == "cv" else SPLIT_MODE
+# TKG_TRAIN_FRAC < 1 keeps only that fraction of TRAIN patients (val/test are
+# untouched), for the training-set-size learning curve
+# (run_mimic_learning_curve.sbatch). The kept set is a per-patient hash under
+# its own seed, so it is independent of the split hash and nested: every
+# patient kept at frac=0.1 is also kept at frac=0.25. Dropped patients are
+# removed from the cohort entirely (no graph node, no facts).
+TRAIN_FRAC = float(os.environ.get("TKG_TRAIN_FRAC", "1.0"))
+TRAIN_SUBSAMPLE_HASH_SEED = 20261111
+if TRAIN_FRAC < 1.0:
+    SPLIT_TAG = f"{SPLIT_TAG}_train{TRAIN_FRAC:g}"
+TEMPORAL_TRAIN_MAX_YEAR = int(os.environ.get("TKG_TEMPORAL_TRAIN_MAX", "2013"))
+TEMPORAL_VAL_MAX_YEAR = int(os.environ.get("TKG_TEMPORAL_VAL_MAX", "2016"))
 
 # Cardiometabolic index conditions (ICD-10)
 CARDIOMETA_ICD10 = {
