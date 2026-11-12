@@ -101,7 +101,10 @@ def run(cv_root: str, n_folds: int) -> pd.DataFrame:
             for cause in CAUSES:
                 for h in HORIZON_DAYS:
                     col = tmpl.format(c=cause, h=h)
-                    if col not in parts[0]:
+                    missing = [int(pr["fold"].iloc[0]) for pr in parts if col not in pr]
+                    if missing:   # e.g. a CoxNet fit that diverged in one fold
+                        if len(missing) < n_folds:
+                            print(f"  skip {model} seed {seed} {cause} @{h}d: no predictions in fold(s) {missing}")
                         continue
                     for pr in parts:   # per-fold metric, raw scores
                         r = _eval_horizon_auroc(pr[col].to_numpy(float), pr, cause, [h])[0]

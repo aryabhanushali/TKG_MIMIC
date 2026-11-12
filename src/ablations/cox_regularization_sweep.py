@@ -57,9 +57,20 @@ def run() -> None:
         y_tr = _make_y(labels_tr, cause)
 
         print(f"  fitting full regularization path (l1_ratio={L1_RATIO})...")
-        cox_path = CoxnetSurvivalAnalysis(l1_ratio=L1_RATIO, n_alphas=100,
-                                            max_iter=2000, tol=1e-7)
-        cox_path.fit(X_tr_dense, y_tr)
+        # Default path first. If its smallest alphas diverge (seen on one
+        # small EHRSHOT CV fold for PAD), stop the path earlier rather than
+        # crash; runs that already fit are unchanged.
+        for amr in (None, 0.01, 0.05):
+            kw = {} if amr is None else {"alpha_min_ratio": amr}
+            cox_path = CoxnetSurvivalAnalysis(l1_ratio=L1_RATIO, n_alphas=100,
+                                                max_iter=2000, tol=1e-7, **kw)
+            try:
+                cox_path.fit(X_tr_dense, y_tr)
+                break
+            except ArithmeticError:
+                if amr == 0.05:
+                    raise
+                print(f"  path diverged (alpha_min_ratio={amr or 'default'}); retrying with a shorter path")
         alphas = cox_path.alphas_
         print(f"  path has {len(alphas)} alphas, range [{alphas.min():.6f}, {alphas.max():.6f}]")
 

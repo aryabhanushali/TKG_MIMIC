@@ -1,0 +1,105 @@
+srun: job 6966333 queued and waiting for resources
+srun: job 6966333 has been allocated resources
+---------------------------------------
+Begin Slurm Prolog: Nov-11-2026 16:16:33
+Job ID:    6966333
+User ID:   hsathu3
+Account:   coc
+Job name:  bash
+Partition: ice-cpu
+QOS:       coe-ice
+---------------------------------------
+  Cox: seeds [42]
+  XGBoost: seeds [42, 43, 44, 45, 46]
+  TKG-Transformer: seeds [42, 43, 44, 45, 46]
+  Patient-graph GNN: seeds [42, 43, 44, 45, 46]
+
+=== Paired robustness (/storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output) ===
+
+TKG-Transformer vs Cox: mean delta -0.042; model ahead in 3/15 cells; t-test Bonferroni-sig 4; ROBUST 0 (none)
+
+TKG-Transformer vs XGBoost: mean delta -0.059; model ahead in 0/15 cells; t-test Bonferroni-sig 6; ROBUST 2 (HF 1y: comparator wins, HF 3y: comparator wins)
+
+Patient-graph GNN vs Cox: mean delta -0.037; model ahead in 3/15 cells; t-test Bonferroni-sig 10; ROBUST 5 (MI 1y: comparator wins, MI 3y: comparator wins, Stroke 1y: comparator wins, HF 1y: comparator wins, HF 3y: comparator wins)
+
+Patient-graph GNN vs XGBoost: mean delta -0.054; model ahead in 0/15 cells; t-test Bonferroni-sig 11; ROBUST 2 (HF 1y: comparator wins, HF 3y: comparator wins)
+
+XGBoost vs Cox: mean delta +0.017; model ahead in 9/15 cells; t-test Bonferroni-sig 12; ROBUST 0 (none)
+
+Saved: /storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output/stats/paired_robustness.csv
+Loading test-set predictions...
+  Cox: seeds [42]
+  XGBoost: seeds [42, 43, 44, 45, 46]
+  TKG-Transformer: seeds [42, 43, 44, 45, 46]
+  Patient-graph GNN: seeds [42, 43, 44, 45, 46]
+  5000 test patients scored by every available model
+Building pre-index descriptors and subgroups...
+1/4 Subgroup interaction scan...
+2/4 Rescued-positive profiling...
+3/4 Which disease first...
+4/4 Complementarity...
+
+DISCUSSION CANDIDATE FINDINGS (exploratory; see CSVs for every number)
+Models available: Cox (1 seed(s)), XGBoost (5 seed(s)), TKG-Transformer (5 seed(s)), Patient-graph GNN (5 seed(s))
+
+1. SUBGROUP INTERACTIONS  interaction = (A-B in subgroup) - (A-B in rest), AUROC
+   Ranked by Wilcoxon p over cells; q = BH across the whole scan. 'A wins in sg' = cells
+   where A beats B inside the subgroup itself in >=4/5 seeds.
+   [pg_vs_cox] few distinct concepts (< 35) (n=1948, median pos/cell=21): interaction +0.066; consistent +12/-1 of 15 cells; p=0.000183, q=0.019; A-B inside sg -0.003 (A wins 4 cells)
+   [pg_vs_cox] 1 index cardiometabolic condition (n=2086, median pos/cell=15): interaction +0.044; consistent +11/-0 of 15 cells; p=0.000305, q=0.019; A-B inside sg -0.014 (A wins 3 cells)
+   [pg_vs_tkg] few distinct concepts (< 35) (n=1948, median pos/cell=21): interaction +0.036; consistent +11/-0 of 15 cells; p=0.000854, q=0.025; A-B inside sg +0.024 (A wins 7 cells)
+   [pg_vs_cox] thin history (< 44 facts, paper split) (n=2074, median pos/cell=27): interaction +0.041; consistent +12/-2 of 15 cells; p=0.000854, q=0.025; A-B inside sg -0.016 (A wins 3 cells)
+   [tkg_vs_xgb] race: Black (n=616, median pos/cell=10): interaction -0.061; consistent +0/-8 of 11 cells; p=0.000977, q=0.025; A-B inside sg -0.098 (A wins 0 cells)
+   [pg_vs_tkg] thin history (< 44 facts, paper split) (n=2074, median pos/cell=27): interaction +0.032; consistent +10/-2 of 15 cells; p=0.00201, q=0.042; A-B inside sg +0.021 (A wins 7 cells)
+   [tkg_vs_cox] race: Black (n=616, median pos/cell=10): interaction -0.043; consistent +0/-7 of 11 cells; p=0.00684, q=0.12; A-B inside sg -0.079 (A wins 0 cells)
+   [tkg_vs_cox] no encounter before index admission (n=1501, median pos/cell=18): interaction -0.051; consistent +2/-10 of 15 cells; p=0.0103, q=0.12; A-B inside sg -0.076 (A wins 0 cells)
+   [pg_vs_xgb] long history span (> 141 days) (n=2119, median pos/cell=25): interaction +0.062; consistent +10/-3 of 15 cells; p=0.0103, q=0.12; A-B inside sg -0.023 (A wins 3 cells)
+   [pg_vs_cox] age >= 69 (old tertile) (n=1360, median pos/cell=23): interaction -0.047; consistent +2/-11 of 15 cells; p=0.0125, q=0.12; A-B inside sg -0.075 (A wins 0 cells)
+   [tkg_vs_cox] few distinct concepts (< 35) (n=1948, median pos/cell=21): interaction +0.030; consistent +6/-2 of 15 cells; p=0.0125, q=0.12; A-B inside sg -0.027 (A wins 2 cells)
+   [pg_vs_xgb] age < 56 (young tertile) (n=945, median pos/cell=10): interaction -0.079; consistent +1/-9 of 10 cells; p=0.0137, q=0.12; A-B inside sg -0.122 (A wins 1 cells)
+
+2. RESCUED POSITIVES (3y, diseases pooled): true positives one model ranks >=25 pct-pts higher
+   [pg_vs_cox] cox-favoured: n=37, median facts=43, concepts=38, span=111d, age=61, CCI=1
+   [pg_vs_cox] pg-favoured: n=17, median facts=56, concepts=38, span=183d, age=64, CCI=3
+   [pg_vs_tkg] pg-favoured: n=18, median facts=40, concepts=36, span=124d, age=68, CCI=2
+   [pg_vs_tkg] tkg-favoured: n=20, median facts=40, concepts=28, span=60d, age=54, CCI=0
+   [tkg_vs_cox] cox-favoured: n=34, median facts=42, concepts=34, span=196d, age=70, CCI=0
+   [tkg_vs_cox] tkg-favoured: n=18, median facts=52, concepts=37, span=277d, age=62, CCI=2
+   [pg_vs_cox] profile differs on cci_score: 3.00 vs 1.00 (p=3.59e-06)
+   [pg_vs_tkg] profile differs on age_at_index: 68.50 vs 53.50 (p=8.78e-05)
+   [pg_vs_tkg] profile differs on cci_score: 2.00 vs 0.50 (p=0.00668)
+   [pg_vs_tkg] profile differs on num_cardiometa_conditions: 2.00 vs 1.00 (p=0.0108)
+   [tkg_vs_cox] profile differs on cci_score: 1.50 vs 0.50 (p=0.0482)
+   [pg_vs_cox] concept DRUG_INSULIN (prescription): 65% vs 19%, OR=7.19, p=0.0017, q=0.041
+   [pg_vs_cox] concept OMR_BP_NORMAL (omr_bp): 59% vs 24%, OR=4.20, p=0.03, q=0.25
+   [pg_vs_cox] concept LAB_AST (lab): 53% vs 22%, OR=3.88, p=0.03, q=0.25
+   [tkg_vs_cox] concept LAB_AST (lab): 50% vs 21%, OR=3.67, p=0.056, q=0.82
+   [pg_vs_tkg] concept LAB_BUN (lab): 56% vs 85%, OR=0.25, p=0.074, q=0.57
+   [pg_vs_tkg] concept DRUG_SENNA (prescription): 61% vs 30%, OR=3.42, p=0.1, q=0.57
+   [pg_vs_tkg] concept OMR_BP_NORMAL (omr_bp): 61% vs 30%, OR=3.42, p=0.1, q=0.57
+   [pg_vs_tkg] concept DRUG_DOCUSATE_SODIUM (prescription): 67% vs 40%, OR=2.83, p=0.12, q=0.57
+   [tkg_vs_cox] concept DRUG_INSULIN (prescription): 50% vs 26%, OR=2.68, p=0.13, q=0.82
+   [tkg_vs_cox] concept OMR_BMI_OBESE (omr_bmi): 17% vs 38%, OR=0.36, p=0.13, q=0.82
+   [tkg_vs_cox] concept LAB_GLUCOSE (lab): 78% vs 56%, OR=2.56, p=0.14, q=0.82
+   [pg_vs_cox] concept ICD9_2724 (diagnosis): 41% vs 22%, OR=2.48, p=0.19, q=1
+   [tkg_vs_cox] concept LAB_BUN (lab): 83% vs 65%, OR=2.46, p=0.21, q=0.82
+   [pg_vs_cox] concept OMR_BP_HIGH (omr_bp): 47% vs 27%, OR=2.34, p=0.21, q=1
+   [tkg_vs_cox] concept LAB_WBC (lab): 78% vs 59%, OR=2.28, p=0.23, q=0.82
+   [pg_vs_cox] concept LAB_BUN (lab): 71% vs 84%, OR=0.47, p=0.29, q=1
+   [pg_vs_tkg] concept LAB_WBC (lab): 50% vs 70%, OR=0.45, p=0.32, q=0.9
+   [pg_vs_tkg] concept LAB_POTASSIUM (lab): 67% vs 50%, OR=1.92, p=0.34, q=0.9
+
+3. WHICH DISEASE FIRST (events within 5y; argmax of within-disease percentile risk)
+   Cox: top-1 acc 0.272 (sd 0.000), macro OvR AUC 0.579, majority-class 0.296
+   Patient-graph GNN: top-1 acc 0.245 (sd 0.009), macro OvR AUC 0.549, majority-class 0.296; seed-avg vs Cox -0.019 [-0.071, +0.038]
+   TKG-Transformer: top-1 acc 0.276 (sd 0.009), macro OvR AUC 0.554, majority-class 0.296; seed-avg vs Cox +0.016 [-0.041, +0.071]
+   XGBoost: top-1 acc 0.298 (sd 0.016), macro OvR AUC 0.600, majority-class 0.296; seed-avg vs Cox +0.024 [-0.030, +0.079]
+
+4. COMPLEMENTARITY (rank-average with Cox vs Cox alone)
+   Cox+Patient-graph GNN: mean gain -0.0001, gains in 4/15 cells, DeLong p<0.05 (gain) in 0; median Spearman with Cox 0.75
+   Cox+TKG-Transformer: mean gain +0.0064, gains in 9/15 cells, DeLong p<0.05 (gain) in 0; median Spearman with Cox 0.73
+   Cox+XGBoost: mean gain +0.0197, gains in 15/15 cells, DeLong p<0.05 (gain) in 3; median Spearman with Cox 0.82
+   (Cox+XGBoost is the same-information control: a larger gain from a neural partner
+    suggests signal the fixed-feature vector does not capture.)
+
+All outputs in /storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output/stats/discussion

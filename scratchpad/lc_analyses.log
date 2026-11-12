@@ -1,0 +1,93 @@
+srun: job 6966818 queued and waiting for resources
+srun: job 6966818 has been allocated resources
+---------------------------------------
+Begin Slurm Prolog: Nov-11-2026 16:38:41
+Job ID:    6966818
+User ID:   hsathu3
+Account:   coc
+Job name:  bash
+Partition: ice-cpu
+QOS:       coe-ice
+---------------------------------------
+=== Paired robustness (/storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output_lc/frac0.05) ===
+TKG-Transformer vs Cox: mean delta -0.058; model ahead in 4/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+TKG-Transformer vs XGBoost: mean delta -0.047; model ahead in 3/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+Patient-graph GNN vs Cox: mean delta -0.004; model ahead in 8/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+Patient-graph GNN vs XGBoost: mean delta +0.006; model ahead in 8/15 cells; t-test Bonferroni-sig 1; ROBUST 0 (none)
+XGBoost vs Cox: mean delta -0.011; model ahead in 7/15 cells; t-test Bonferroni-sig 8; ROBUST 1 (MI 1y: comparator wins)
+=== Paired robustness (/storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output_lc/frac0.1) ===
+TKG-Transformer vs Cox: mean delta -0.039; model ahead in 3/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+TKG-Transformer vs XGBoost: mean delta -0.036; model ahead in 6/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+Patient-graph GNN vs Cox: mean delta +0.000; model ahead in 6/15 cells; t-test Bonferroni-sig 1; ROBUST 0 (none)
+Patient-graph GNN vs XGBoost: mean delta +0.003; model ahead in 8/15 cells; t-test Bonferroni-sig 2; ROBUST 0 (none)
+XGBoost vs Cox: mean delta -0.003; model ahead in 6/15 cells; t-test Bonferroni-sig 9; ROBUST 2 (Stroke 3y: comparator wins, Stroke 5y: comparator wins)
+=== Paired robustness (/storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output_lc/frac0.25) ===
+TKG-Transformer vs Cox: mean delta -0.022; model ahead in 8/15 cells; t-test Bonferroni-sig 2; ROBUST 2 (MI 1y: comparator wins, PAD 3y: model wins)
+TKG-Transformer vs XGBoost: mean delta -0.020; model ahead in 5/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+Patient-graph GNN vs Cox: mean delta +0.009; model ahead in 9/15 cells; t-test Bonferroni-sig 2; ROBUST 1 (PAD 1y: model wins)
+Patient-graph GNN vs XGBoost: mean delta +0.010; model ahead in 10/15 cells; t-test Bonferroni-sig 1; ROBUST 0 (none)
+XGBoost vs Cox: mean delta -0.001; model ahead in 8/15 cells; t-test Bonferroni-sig 4; ROBUST 1 (PAD 1y: model wins)
+=== Paired robustness (/storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output_lc/frac0.5) ===
+TKG-Transformer vs Cox: mean delta -0.036; model ahead in 2/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+TKG-Transformer vs XGBoost: mean delta -0.053; model ahead in 1/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+Patient-graph GNN vs Cox: mean delta -0.018; model ahead in 5/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+Patient-graph GNN vs XGBoost: mean delta -0.035; model ahead in 2/15 cells; t-test Bonferroni-sig 0; ROBUST 0 (none)
+XGBoost vs Cox: mean delta +0.017; model ahead in 11/15 cells; t-test Bonferroni-sig 2; ROBUST 1 (HF 5y: model wins)
+
+=== 1. Across diseases within a run: Spearman(margin, train events) over 15 cells ===
+       run       pair  spearman_rho     p  margin_mean rarest_disease  margin_rarest
+ EHRSHOT 1  pg_vs_cox         0.622 0.013       -0.009         Stroke         -0.115
+ EHRSHOT 1  pg_vs_xgb         0.360 0.187       -0.026         Stroke         -0.092
+ EHRSHOT 1 tkg_vs_cox         0.153 0.587       -0.003         Stroke         -0.005
+ EHRSHOT 1 tkg_vs_xgb        -0.447 0.095       -0.020         Stroke          0.019
+ EHRSHOT 1 xgb_vs_cox         0.567 0.027        0.017         Stroke         -0.023
+MIMIC 0.05  pg_vs_cox        -0.786 0.001       -0.004            PAD          0.077
+MIMIC 0.05  pg_vs_xgb        -0.382 0.160        0.006            PAD          0.019
+MIMIC 0.05 tkg_vs_cox        -0.436 0.104       -0.058            PAD         -0.021
+MIMIC 0.05 tkg_vs_xgb        -0.131 0.642       -0.047            PAD         -0.079
+MIMIC 0.05 xgb_vs_cox        -0.458 0.086       -0.011            PAD          0.058
+ MIMIC 0.1  pg_vs_cox        -0.687 0.005        0.000            PAD          0.093
+ MIMIC 0.1  pg_vs_xgb        -0.851 0.000        0.003            PAD          0.064
+ MIMIC 0.1 tkg_vs_cox        -0.687 0.005       -0.039            PAD          0.040
+ MIMIC 0.1 tkg_vs_xgb        -0.818 0.000       -0.036            PAD          0.012
+ MIMIC 0.1 xgb_vs_cox         0.076 0.787       -0.003            PAD          0.029
+MIMIC 0.25  pg_vs_cox        -0.571 0.026        0.009            PAD          0.115
+MIMIC 0.25  pg_vs_xgb        -0.789 0.000        0.010            PAD          0.039
+MIMIC 0.25 tkg_vs_cox        -0.420 0.119       -0.022            PAD          0.103
+MIMIC 0.25 tkg_vs_xgb        -0.733 0.002       -0.020            PAD          0.027
+MIMIC 0.25 xgb_vs_cox        -0.257 0.354       -0.001            PAD          0.076
+ MIMIC 0.5  pg_vs_cox        -0.404 0.136       -0.018            PAD          0.014
+ MIMIC 0.5  pg_vs_xgb        -0.546 0.035       -0.035            PAD         -0.006
+ MIMIC 0.5 tkg_vs_cox        -0.393 0.148       -0.036            PAD         -0.007
+ MIMIC 0.5 tkg_vs_xgb        -0.349 0.202       -0.053            PAD         -0.027
+ MIMIC 0.5 xgb_vs_cox        -0.087 0.757        0.017            PAD          0.020
+   MIMIC 1  pg_vs_cox        -0.622 0.013       -0.037            PAD          0.037
+   MIMIC 1  pg_vs_xgb        -0.404 0.136       -0.054            PAD         -0.033
+   MIMIC 1 tkg_vs_cox        -0.196 0.483       -0.042            PAD          0.012
+   MIMIC 1 tkg_vs_xgb         0.240 0.389       -0.059            PAD         -0.058
+   MIMIC 1 xgb_vs_cox        -0.262 0.346        0.017            PAD          0.069
+
+=== 2. Within disease (MIMIC learning curve): margin ~ log10(train events) + disease + horizon FE ===
+               analysis       pair  n_cells  slope_per_10x_events  se_cluster      p  margin_frac0.05  margin_frac0.1  margin_frac0.25  margin_frac0.5  margin_frac1
+within_disease_mimic_lc  pg_vs_cox       75               -0.0235      0.0195 0.2942          -0.0043          0.0004           0.0087         -0.0176       -0.0366
+within_disease_mimic_lc  pg_vs_xgb       75               -0.0468      0.0156 0.0400           0.0063          0.0034           0.0100         -0.0347       -0.0535
+within_disease_mimic_lc tkg_vs_cox       75                0.0122      0.0259 0.6627          -0.0578         -0.0394          -0.0216         -0.0356       -0.0423
+within_disease_mimic_lc tkg_vs_xgb       75               -0.0111      0.0224 0.6455          -0.0472         -0.0364          -0.0203         -0.0527       -0.0591
+within_disease_mimic_lc xgb_vs_cox       75                0.0233      0.0141 0.1742          -0.0106         -0.0030          -0.0013          0.0171        0.0169
+  (negative slope = the TKG model's margin GROWS as training events shrink)
+
+=== Mean AUROC per model per run ===
+model                 cox     pg    tkg    xgb
+dataset train_frac                            
+EHRSHOT 1.00        0.634  0.625  0.631  0.651
+MIMIC   0.05        0.628  0.624  0.570  0.617
+        0.10        0.650  0.650  0.610  0.647
+        0.25        0.660  0.668  0.638  0.658
+        0.50        0.696  0.679  0.661  0.713
+        1.00        0.714  0.677  0.672  0.731
+
+Saved to /storage/ice1/9/3/hsathu3/TKG_MIMIC/tkg_output/stats/case_count
+  saved /storage/ice1/9/3/hsathu3/TKG_MIMIC/paper_figures/fig7_sample_size.png
+/storage/ice1/9/3/hsathu3/TKG_MIMIC/src/make_case_count_figures.py:179: UserWarning: This figure includes Axes that are not compatible with tight_layout, so results might be incorrect.
+  fig.tight_layout()
+  saved /storage/ice1/9/3/hsathu3/TKG_MIMIC/paper_figures/fig8_subgroups.png
